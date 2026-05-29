@@ -100,7 +100,7 @@ def find_root_cells(adata, CFG, log):
     root_mask[0] = True
     return root_mask
 
-def compute_dpt(adata, root_mask, log):
+def compute_dpt(adata, root_mask, CFG, log):
     """扩散图 + 扩散伪时间"""
     log.info("扩散图 (n_comps=%d)...", CFG.n_diffmap_comps)
     sc.tl.diffmap(adata, n_comps=CFG.n_diffmap_comps)
@@ -207,7 +207,7 @@ def main():
     recompute_neighbors(adata, CFG, log)
     run_paga(adata, CFG, log)
     root_mask = find_root_cells(adata, CFG, log)
-    compute_dpt(adata, root_mask, log)
+    compute_dpt(adata, root_mask, CFG, log)
     branch_analysis(adata, CFG, log)
     gene_trends(adata, CFG, log)
 

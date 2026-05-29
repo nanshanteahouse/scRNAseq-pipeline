@@ -18,7 +18,7 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 
-def plot_composition(adata, group_col, stage_col, stage_order, fig_dir, log):
+def plot_composition(adata, group_col, stage_col, stage_order, fig_dir, table_dir, log):
     """绘制细胞类型随发育阶段的组成变化堆积图"""
     if group_col not in adata.obs or stage_col not in adata.obs:
         log.warning("缺少 %s 或 %s，跳过组成图", group_col, stage_col)
@@ -52,7 +52,7 @@ def plot_composition(adata, group_col, stage_col, stage_order, fig_dir, log):
     log.info("  组成图已保存: composition_by_stage_%s.png", group_col)
 
     # 导出 CSV
-    ct_pivot.to_csv(os.path.join(CFG.table_dir, f'composition_by_stage_{group_col}.csv'))
+    ct_pivot.to_csv(os.path.join(table_dir, f'composition_by_stage_{group_col}.csv'))
     log.info("  组成表已导出")
 
 def main():
@@ -77,7 +77,7 @@ def main():
     for g in group_by:
         if g in adata.obs:
             plot_composition(adata, g, 'stage' if 'stage' in adata.obs else 'sample',
-                             CFG.stage_order, fig_dir, log)
+                             CFG.stage_order, fig_dir, CFG.table_dir, log)
 
     # 2. UMAP: QC 指标
     qc_metrics = ['n_genes_by_counts', 'total_counts', 'pct_counts_mt']

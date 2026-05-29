@@ -60,7 +60,7 @@ def run_annotation(adata, marker_dict, log):
             lambda row: row.sort_values(ascending=False).values, axis=1, result_type='expand'
         )
         confidence = sorted_scores.iloc[:, 0] - sorted_scores.iloc[:, 1]
-        adata.obs['annotation_confidence'] = adata.obs['leiden'].map(confidence).values
+        adata.obs['annotation_confidence'] = adata.obs['leiden'].map(confidence).astype(float).values
         low_conf = (adata.obs['annotation_confidence'] < 0.02).sum()
         if low_conf > 0:
             log.info("  低置信度细胞 (<0.02): %d (%.1f%%)",
