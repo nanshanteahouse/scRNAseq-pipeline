@@ -1,0 +1,37 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.egg-info/
+dist/
+build/
+
+# Environment
+.venv/
+venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+logs/
+*.log
+
+# Output (keep tracked structure but ignore generated results)
+results/h5ad/
+results/figures/
+results/tables/
+outputs/
+
+# Cache
+cache/
+*.h5ad
+*.h5
