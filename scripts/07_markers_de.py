@@ -1,0 +1,204 @@
+#!/usr/bin/env python3
+"""
+Step 07: 标记基因 + 差异表达分析
+=====================================
+三层分析 (结合 GSE169109 + GSE138002):
+  Layer 1: 每组 vs 其他 — Wilcoxon rank-sum
+  Layer 2: 相邻发育阶段配对比较 — per cell type
+  Layer 3: 发育时间趋势基因 — Spearman 相关
+
+输入: 04_clustered.h5ad (需要 Stage 05 注释结果)
+输出: tables/*.csv + figures
+"""
+import sys, os, time, argparse
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from utils import setup_logger, resolve_config, safe_plot
+import numpy as np
+import pandas as pd
+import scanpy as sc
+from scipy.stats import spearmanr
+import scipy.sparse as sp
+
+def layer1_markers(adata, CFG, log):
+    """全细胞类型标记基因 (Wilcoxon, each vs rest)"""
+    group_col = 'cell_type' if 'cell_type' in adata.obs else 'leiden'
+    log.info("[Layer 1] 标记基因检测: groupby=%s", group_col)
+    sc.tl.rank_genes_groups(
+        adata, groupby=group_col, method='wilcoxon',
+        n_genes=CFG.de_n_genes * 2, use_raw=True, pts=True,
+        random_state=CFG.random_seed,
+    )
+    result = sc.get.rank_genes_groups_df(adata, group=None)
+    if CFG.de_pval_cutoff is not None:
+        result = result[result['pvals_adj'] < CFG.de_pval_cutoff]
+    out_path = os.path.join(CFG.table_dir, 'marker_genes_per_group.csv')
+    result.to_csv(out_path, index=False)
+    log.info("  导出: %s (%d 行)", out_path, len(result))
+
+    for group in adata.obs[group_col].cat.categories:
+        top5 = result[result['group'] == group].head(5)
+        if len(top5) > 0:
+            log.info("  %s top5: %s", group, ', '.join(top5['names'].values))
+    return result
+
+def layer2_pairwise_de(adata, CFG, log):
+    """相邻发育阶段配对差异表达"""
+    if 'stage' not in adata.obs or not CFG.stage_order:
+        log.info("[Layer 2] 无阶段信息，跳过。")
+        return {}
+    stage_pairs = list(zip(CFG.stage_order[:-1], CFG.stage_order[1:]))
+    ct_col = 'cell_type' if 'cell_type' in adata.obs else 'leiden'
+    all_results = {}
+    log.info("[Layer 2] 相邻阶段配对 DE (%d 对, %d 类)...",
+             len(stage_pairs), adata.obs[ct_col].nunique())
+
+    for ct in adata.obs[ct_col].cat.categories:
+        ct_mask = adata.obs[ct_col] == ct
+        ct_adata = adata[ct_mask].copy()
+        if ct_adata.n_obs < 20:
+            continue
+        for s1, s2 in stage_pairs:
+            mask = ct_adata.obs['stage'].isin([s1, s2])
+            sub = ct_adata[mask].copy()
+            if sub.obs['stage'].value_counts().min() < 5:
+                continue
+            try:
+                sc.tl.rank_genes_groups(
+                    sub, groupby='stage', groups=[s2], reference=s1,
+                    method='t-test', n_genes=CFG.de_n_genes,
+                    use_raw=True, random_state=CFG.random_seed,
+                )
+                de_df = sc.get.rank_genes_groups_df(sub, group=s2)
+                if CFG.de_pval_cutoff is not None:
+                    de_df = de_df[de_df['pvals_adj'] < CFG.de_pval_cutoff].copy()
+                de_df['cell_type'] = ct
+                de_df['comparison'] = f'{s2}_vs_{s1}'
+                all_results[f'{ct}_{s2}_vs_{s1}'] = de_df
+            except Exception as e:
+                log.debug("  %s %s vs %s 失败: %s", ct, s2, s1, e)
+
+    if all_results:
+        combined = pd.concat(all_results.values(), ignore_index=True)
+        out_path = os.path.join(CFG.table_dir, 'pairwise_stage_de.csv')
+        combined.to_csv(out_path, index=False)
+        log.info("  导出: %s (%d 行)", out_path, len(combined))
+    return all_results
+
+def layer3_temporal_trends(adata, CFG, log):
+    """发育时间趋势基因 (Spearman 相关 vs 发育顺序)"""
+    if 'stage' not in adata.obs or not CFG.stage_order:
+        log.info("[Layer 3] 无阶段信息，跳过。")
+        return pd.DataFrame()
+
+    stage_numeric = {s: i for i, s in enumerate(CFG.stage_order)}
+    ct_col = 'cell_type' if 'cell_type' in adata.obs else 'leiden'
+    log.info("[Layer 3] 时间趋势分析 (per %s)...", ct_col)
+    results = []
+
+    for ct in adata.obs[ct_col].cat.categories:
+        ct_mask = adata.obs[ct_col] == ct
+        n_ct = ct_mask.sum()
+        if n_ct < 50:
+            continue
+        stages = adata.obs.loc[ct_mask, 'stage']
+        # 至少 3 个阶段且每阶段 >= 5 细胞
+        valid_stages = [s for s in CFG.stage_order
+                        if s in stages.values and (stages == s).sum() >= 5]
+        if len(valid_stages) < 3:
+            continue
+
+        stage_means = {}
+        for s in valid_stages:
+            s_mask = (stages == s).values
+            s_idx = np.flatnonzero(ct_mask.values)[s_mask]
+            sub_X = adata.raw[s_idx].X
+            mean_expr = (np.asarray(sub_X.mean(axis=0)).flatten()
+                         if sp.issparse(sub_X)
+                         else sub_X.mean(axis=0))
+            stage_means[s] = mean_expr
+
+        stage_nums = np.array([stage_numeric[s] for s in valid_stages])
+        mean_matrix = np.stack([stage_means[s] for s in valid_stages], axis=1)
+        gene_names = adata.raw.var_names
+
+        corr = np.array([
+            spearmanr(mean_matrix[i], stage_nums)[0]
+            for i in range(len(gene_names))
+        ])
+        corr_idx = np.argsort(corr)[::-1]
+        n_top = min(20, len(corr))
+
+        for i in range(n_top):
+            idx = corr_idx[i]
+            results.append({
+                'cell_type': ct, 'gene': gene_names[idx],
+                'spearman_r': corr[idx], 'direction': 'up',
+            })
+        for i in range(n_top):
+            idx = corr_idx[-1 - i]
+            results.append({
+                'cell_type': ct, 'gene': gene_names[idx],
+                'spearman_r': corr[idx], 'direction': 'down',
+            })
+
+    results_df = pd.DataFrame(results)
+    if len(results_df) > 0:
+        out_path = os.path.join(CFG.table_dir, 'temporal_trend_genes.csv')
+        results_df.to_csv(out_path, index=False)
+        log.info("  导出: %s (%d 行)", out_path, len(results_df))
+    return results_df
+
+def generate_figures(adata, markers_df, CFG, log):
+    sc.settings.figdir = CFG.figure_dir
+    sc.settings.autoshow = False
+
+    # Heatmap: 每个类型 top5 标记
+    top5_per_group = (
+        markers_df[markers_df['pvals_adj'] < 0.01]
+        .groupby('group')
+        .apply(lambda x: x.nsmallest(5, 'pvals_adj'))
+        .reset_index(drop=True)
+    )
+    top_genes = top5_per_group['names'].unique().tolist()
+    top_genes = [g for g in top_genes if g in adata.raw.var_names][:30]
+    if len(top_genes) >= 5:
+        group_col = 'cell_type' if 'cell_type' in adata.obs else 'leiden'
+        safe_plot(sc.pl.heatmap, adata, var_names=top_genes,
+                  groupby=group_col, show=False, save='_07_marker_heatmap.pdf')
+
+    # 关键标记基因 dotplot
+    if CFG.marker_dict:
+        all_markers = []
+        for genes in CFG.marker_dict.values():
+            all_markers.extend([g for g in genes if g in adata.raw.var_names][:2])
+        all_markers = list(dict.fromkeys(all_markers))
+        if all_markers:
+            group_col = 'cell_type' if 'cell_type' in adata.obs else 'leiden'
+            safe_plot(sc.pl.dotplot, adata, var_names=all_markers,
+                      groupby=group_col, show=False, save='_07_dotplot.pdf')
+
+def main():
+    t0 = time.time()
+    args_parser = argparse.ArgumentParser()
+    args_parser.add_argument("--config", default="../config.py")
+    args = args_parser.parse_args()
+    CFG = resolve_config(args.config)
+    log = setup_logger("07_de", os.path.join(CFG.log_dir, "07_markers_de.log"))
+    log.info("Step 07: 标记基因 + 差异表达分析")
+
+    adata = sc.read(CFG.cluster_h5ad)
+    log.info("加载: %s — %d 细胞", CFG.cluster_h5ad, adata.n_obs)
+
+    # 确保有细胞类型注释
+    if 'cell_type' not in adata.obs and CFG.marker_dict:
+        log.warning("未找到 cell_type 注释，使用 leiden 聚类代替。")
+
+    markers_df = layer1_markers(adata, CFG, log)
+    layer2_pairwise_de(adata, CFG, log)
+    layer3_temporal_trends(adata, CFG, log)
+    generate_figures(adata, markers_df, CFG, log)
+
+    log.info("Step 07 完成, 耗时 %.1fs", time.time() - t0)
+
+if __name__ == '__main__':
+    main()
