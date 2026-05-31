@@ -28,6 +28,9 @@ gseapy>=1.1.0               # GSEApy: GO/KEGG/Reactome 通路富集
 # 注意: gseapy > 0.11.0 需 Rust 编译器。如果 pip 安装失败:
 #   curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 
+# ── AI 调用 (Step 05/06/09 可选) ────────────────────────────────────
+openai>=1.0.0                # OpenAI SDK (兼容所有 OpenAI-compatible API)
+
 # ── WSL 兼容 (仅 Linux/WSL 需要) ───────────────────────────────────
 # 如果在 WSL 上使用 /mnt/d 等 Windows 挂载路径，
 # 需要在运行前设置:

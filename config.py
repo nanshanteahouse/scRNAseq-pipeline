@@ -7,6 +7,7 @@ config.py — 通用 scRNA-seq 分析管线集中配置
   - 所有参数集中在一个 dataclass 中，避免硬编码散落在各脚本里
   - 继承自 GSE169109（下丘脑）和 GSE138002（视网膜）两项目的最佳实践
   - 支持 10X MTX / CSV 矩阵 / h5ad 三种输入格式
+  - 12 步管线 (Step 00-10): raw → QC → doublet → norm → pca/harmony → integrate → cluster → annotate → DE → trajectory → enrichment → report
   - 路径自动解析: 默认所有路径相对于 config.py 所在目录
 
 使用方法:
@@ -22,6 +23,31 @@ config.py — 通用 scRNA-seq 分析管线集中配置
 import os
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional
+
+
+@dataclass
+class AIConfig:
+    """AI configuration — all AI features controlled here, disabled by default"""
+    # Global switch
+    enabled: bool = False
+
+    # Inference endpoint (api_base is the sole switching mechanism)
+    #   "http://<local_lan_url>"       → local vLLM (default, free)
+    #   "https://api.deepseek.com/v1"  → DeepSeek API
+    #   "http://localhost:11434/v1"    → Ollama
+    api_base: str = ""
+    model: str = "deepseek-chat"
+    api_key: str = ""
+    max_tokens: int = 4096
+    temperature: float = 0.1
+
+    # Task-level switches
+    ai_qc_review: bool = False
+    ai_param_suggest: bool = False
+    ai_annotation: bool = True
+    ai_subcluster: bool = True
+    ai_deg_design: bool = False
+    ai_interpretation: bool = True
 
 
 @dataclass
@@ -124,6 +150,9 @@ class Config:
     leiden_resolutions: List[float] = field(
         default_factory=lambda: [0.3, 0.5, 0.8, 1.0, 1.5, 2.0]
     )
+    # Parameter grid for multi-run clustering (Step 04)
+    param_grid_n_neighbors: list = field(default_factory=lambda: [15, 20, 30])
+    param_grid_resolutions: list = field(default_factory=lambda: [0.3, 0.5, 0.8, 1.0, 1.5, 2.0])
     leiden_flavor: str = "igraph"        # 'igraph' | 'leidenalg'
     best_resolution: float = 1.0         # 注释时使用的主分辨率
 
@@ -187,6 +216,11 @@ class Config:
     scanpy_verbosity: int = 2            # 0=quiet, 1=warn, 2=info, 3=hint
 
     # ═══════════════════════════════════════════════════════════════════
+    #  AI 配置
+    # ═══════════════════════════════════════════════════════════════════
+    ai: AIConfig = field(default_factory=AIConfig)
+
+    # ═══════════════════════════════════════════════════════════════════
     #  中间 h5ad checkpoint 路径（自动派生）
     # ═══════════════════════════════════════════════════════════════════
     @property
@@ -198,6 +232,10 @@ class Config:
         return os.path.join(self.h5ad_dir, "01_qc.h5ad")
 
     @property
+    def doublet_h5ad(self) -> str:
+        return os.path.join(self.h5ad_dir, "01_doublet.h5ad")
+
+    @property
     def norm_h5ad(self) -> str:
         return os.path.join(self.h5ad_dir, "02_normalized.h5ad")
 
@@ -206,8 +244,16 @@ class Config:
         return os.path.join(self.h5ad_dir, "03_harmony.h5ad")
 
     @property
+    def integrated_h5ad(self) -> str:
+        return os.path.join(self.h5ad_dir, "03_integrated.h5ad")
+
+    @property
     def cluster_h5ad(self) -> str:
         return os.path.join(self.h5ad_dir, "04_clustered.h5ad")
+
+    @property
+    def annotated_h5ad(self) -> str:
+        return os.path.join(self.h5ad_dir, "05_annotated.h5ad")
 
     @property
     def final_h5ad(self) -> str:
