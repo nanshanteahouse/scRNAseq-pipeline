@@ -21,7 +21,7 @@ run_pipeline.py — 通用 scRNA-seq 管线主控
 checkpoint 依赖链:
     00_raw.h5ad    ← 00_load.py
     01_doublet.h5ad ← 01_doublet.py
-    01_qc.h5ad     ← 02_qc.py (步骤 02, doublet 已去除)
+    02_qc.h5ad     ← 02_qc.py (步骤 02, doublet 已去除)
     03_integrated.h5ad ← 03_integrate.py
     04_clustered.h5ad  ← 04_cluster_umap.py (步骤 08 读取)
     05_annotated.h5ad  ← 05_annotate_major.py (步骤 06,07,10 读取)
@@ -39,7 +39,7 @@ import argparse
 STEPS = [
     ("00", "00_load.py",                "加载原始数据 → 00_raw.h5ad"),
     ("01", "01_doublet.py",             "Scrublet 双细胞检测 (per sample) → 01_doublet.h5ad"),
-    ("02", "02_qc.py",                  "QC 过滤 (doublet 已去除) → 01_qc.h5ad"),
+    ("02", "02_qc.py",                  "QC 过滤 (doublet 已去除) → 02_qc.h5ad"),
     ("03", "03_integrate.py",           "归一化 + HVG + PCA + Harmony → 03_integrated.h5ad"),
     ("04", "04_cluster_umap.py",        "多参数 UMAP + 多分辨率 Leiden"),
     ("05", "05_annotate_major.py",      "AI 辅助 major cell type 注释 (双模式)"),
@@ -55,7 +55,7 @@ STEPS = [
 CHECKPOINT_FILES = [
     "00_raw.h5ad",          # step 00
     "01_doublet.h5ad",      # step 01
-    "01_qc.h5ad",           # step 02
+    "02_qc.h5ad",           # step 02
     "03_integrated.h5ad",   # step 03
     "04_clustered.h5ad",    # step 04
     "05_annotated.h5ad",    # step 05

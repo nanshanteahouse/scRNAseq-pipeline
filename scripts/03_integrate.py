@@ -13,7 +13,7 @@ Step 03: 归一化 + HVG 选择 + PCA + Harmony 批次校正（整合版）
   6. PCA (n_pcs_full, elbow 图)
   7. Harmony 批次校正
 
-输入: 01_qc.h5ad
+输入: 02_qc.h5ad
 输出: 03_integrated.h5ad (X = log1p(normalized) on HVGs, .raw = 全基因,
                           obsm: X_pca, X_pca_harmony)
 """

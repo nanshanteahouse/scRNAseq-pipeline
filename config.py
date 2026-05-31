@@ -229,7 +229,7 @@ class Config:
 
     @property
     def qc_h5ad(self) -> str:
-        return os.path.join(self.h5ad_dir, "01_qc.h5ad")
+        return os.path.join(self.h5ad_dir, "02_qc.h5ad")
 
     @property
     def doublet_h5ad(self) -> str:

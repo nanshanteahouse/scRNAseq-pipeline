@@ -8,7 +8,7 @@ Step 02: 归一化 + HVG 选择
   3. adata.raw = adata  (保留全基因)
   4. X 只保留 HVG 用于下游降维
 
-输入: 01_qc.h5ad
+输入: 02_qc.h5ad
 输出: 02_normalized.h5ad (X = log1p(normalized) on HVGs, .raw = 全基因)
 """
 import sys, os, time, argparse

@@ -8,7 +8,7 @@ Step 02: QC filtering (doublets already removed in Step 01)
   3. 自适应 MAD 或全局阈值过滤
 
 输入: 01_doublet.h5ad (含 doublet_scores, predicted_doublet 列)
-输出: 01_qc.h5ad (过滤后的细胞 + QC 指标)
+输出: 02_qc.h5ad (过滤后的细胞 + QC 指标)
 """
 import sys, os, time, argparse
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
