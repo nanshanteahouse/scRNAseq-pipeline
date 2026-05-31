@@ -36,7 +36,9 @@ def plot_composition(adata, group_col, stage_col, stage_order, fig_dir, table_di
     n_types = ct_pivot.shape[1]
     colors = plt.cm.tab20(np.linspace(0, 1, min(n_types, 20)))
     if n_types > 20:
-        colors = np.tile(colors, int(np.ceil(n_types / 20)))[:n_types]
+        n_tile = int(np.ceil(n_types / 20))
+        colors = np.vstack([colors] * n_tile)[:n_types]
+    colors = [tuple(c) for c in colors]
 
     fig, ax = plt.subplots(figsize=(max(10, len(avail_stages) * 1.5), 6))
     ct_pivot.plot(kind='bar', stacked=True, ax=ax, color=colors, width=0.8)

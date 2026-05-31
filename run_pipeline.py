@@ -4,7 +4,7 @@ run_pipeline.py — 通用 scRNA-seq 管线主控
 ==========================================
 
 功能:
-  - 按顺序执行全部 10 步分析
+  - 按顺序执行全部 12 步分析 (00-10)
   - 指定单步或步骤范围运行
   - 从断点恢复（检查 h5ad checkpoint 是否存在）
   - 列出所有可用步骤
@@ -19,12 +19,13 @@ run_pipeline.py — 通用 scRNA-seq 管线主控
     python run_pipeline.py --config my_config.py # 使用自定义配置
 
 checkpoint 依赖链:
-    00_raw.h5ad  ← 00_load.py
-    01_qc.h5ad   ← 01_qc.py
-    02_normalized.h5ad ← 02_normalize_hvg.py
-    03_harmony.h5ad    ← 03_pca_harmony.py
-    04_clustered.h5ad  ← 04_cluster_umap.py (步骤 05-09 读取此 checkpoint)
-    05_final.h5ad      ← 08_trajectory.py
+    00_raw.h5ad    ← 00_load.py
+    01_doublet.h5ad ← 01_doublet.py
+    01_qc.h5ad     ← 01_qc.py (步骤 02, doublet 已去除)
+    03_integrated.h5ad ← 03_integrate.py
+    04_clustered.h5ad  ← 04_cluster_umap.py (步骤 08 读取)
+    05_annotated.h5ad  ← 05_annotate_major.py (步骤 06,07,10 读取)
+    marker_genes_per_group.csv ← 07_markers_de.py (步骤 09 读取)
 """
 
 import sys
@@ -36,36 +37,37 @@ import argparse
 # ── 步骤注册表 ──────────────────────────────────────────────────────────
 # 每步: (序号, 脚本名, 描述)
 STEPS = [
-    ("00", "00_load.py",          "加载原始数据 → 00_raw.h5ad"),
-    ("01", "01_qc.py",            "QC 指标 + Scrublet + 过滤 → 01_qc.h5ad"),
-    ("02", "02_normalize_hvg.py", "归一化 + HVG 选择 → 02_normalized.h5ad"),
-    ("03", "03_pca_harmony.py",   "PCA + Harmony 批次校正 → 03_harmony.h5ad"),
-    ("04", "04_cluster_umap.py",  "邻居图 + UMAP + 多分辨率 Leiden → 04_clustered.h5ad"),
-    ("05", "05_annotate.py",      "细胞类型自动注释 + 子聚类"),
-    ("06", "06_exploratory.py",   "细胞组成 + QC + 标记基因探索"),
-    ("07", "07_markers_de.py",    "标记基因 + 组间差异表达"),
-    ("08", "08_trajectory.py",    "PAGA + DPT + 分支分析 → 05_final.h5ad"),
-    ("09", "09_enrichment.py",    "GO/KEGG 通路富集分析"),
+    ("00", "00_load.py",                "加载原始数据 → 00_raw.h5ad"),
+    ("01", "01_doublet.py",             "Scrublet 双细胞检测 (per sample) → 01_doublet.h5ad"),
+    ("02", "01_qc.py",                  "QC 过滤 (doublet 已去除) → 01_qc.h5ad"),
+    ("03", "03_integrate.py",           "归一化 + HVG + PCA + Harmony → 03_integrated.h5ad"),
+    ("04", "04_cluster_umap.py",        "多参数 UMAP + 多分辨率 Leiden"),
+    ("05", "05_annotate_major.py",      "AI 辅助 major cell type 注释 (双模式)"),
+    ("06", "06_subcluster.py",          "交互式亚型分析 (需 --cell-type 参数)"),
+    ("07", "07_markers_de.py",          "差异表达分析 (多层级)"),
+    ("08", "08_trajectory.py",          "PAGA + DPT 轨迹分析"),
+    ("09", "09_enrichment.py",          "GO/KEGG 富集 + AI 解读"),
+    ("10", "06_exploratory.py",         "探索性分析 (组成/QC/marker探索)"),
 ]
 
 # 每步对应的 checkpoint 文件名
-# 步骤 05-08 读取 04_clustered.h5ad，不写新的 checkpoint
-# 步骤 09 读取 marker_genes_per_group.csv (Step 07 产出), 不写 h5ad
+# 步骤 06-10 读取已生成的上游 checkpoint，不写新的 checkpoint
 CHECKPOINT_FILES = [
-    "00_raw.h5ad",
-    "01_qc.h5ad",
-    "02_normalized.h5ad",
-    "03_harmony.h5ad",
-    "04_clustered.h5ad",
-    "04_clustered.h5ad",   # step 05 reads
-    "04_clustered.h5ad",   # step 06 reads
-    "04_clustered.h5ad",   # step 07 reads
-    "04_clustered.h5ad",   # step 08 reads
-    "04_clustered.h5ad",   # step 09 reads (no h5ad output)
+    "00_raw.h5ad",          # step 00
+    "01_doublet.h5ad",      # step 01
+    "01_qc.h5ad",           # step 02
+    "03_integrated.h5ad",   # step 03
+    "04_clustered.h5ad",    # step 04
+    "05_annotated.h5ad",    # step 05
+    "05_annotated.h5ad",    # step 06 (reads 05_annotated)
+    "05_annotated.h5ad",    # step 07 (reads 05_annotated)
+    "04_clustered.h5ad",    # step 08 (reads 04_clustered)
+    "marker_genes_per_group.csv",  # step 09 (reads CSV from tables/)
+    "05_annotated.h5ad",    # step 10 (reads 05_annotated)
 ]
 
 # 哪些步骤会输出新的 checkpoint（用于 --resume 判断）
-STEPS_WRITE_CHECKPOINT = {0, 1, 2, 3, 4, 8}
+STEPS_WRITE_CHECKPOINT = {0, 1, 2, 3, 4, 5}
 
 
 def find_first_incomplete(h5ad_dir: str) -> int:
