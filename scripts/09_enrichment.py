@@ -21,6 +21,7 @@ Step 09: GO/KEGG 富集分析
 依赖: pip install gseapy (需要 Rust 编译器)
       curl https://sh.rustup.rs -sSf | sh  # 如需要
 """
+import json
 import sys, os, time, argparse, warnings
 from typing import Optional
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -366,6 +367,46 @@ def main():
              total_ora, total_gsea)
 
     save_results(ora_results, prerank_results, CFG, log)
+
+    # ── AI Biological Interpretation (optional) ──
+    if CFG.ai.enabled and CFG.ai.ai_interpretation:
+        log.info("AI: Generating biological interpretation...")
+        try:
+            summary_data = []
+            for gs_name, df in ora_results.items():
+                if df.empty:
+                    continue
+                sig = df[df['Adjusted P-value'] < CFG.enrichment_pval_cutoff]
+                for cluster in sig['cluster'].unique():
+                    cluster_sig = sig[sig['cluster'] == cluster].head(5)
+                    summary_data.append({
+                        "gene_set": gs_name,
+                        "cluster": str(cluster),
+                        "top_terms": cluster_sig[['Term', 'Adjusted P-value']].to_dict('records')
+                    })
+
+            if summary_data:
+                system_prompt = "You are an expert computational biologist interpreting scRNA-seq enrichment results."
+                user_prompt = f"Enrichment results summary:\n{json.dumps(summary_data, indent=2)}\n\nProvide biological interpretation: key pathways, cross-cell-type patterns, and testable hypotheses."
+
+                from scripts.ai_caller import ai_query
+                interpretation = ai_query(system_prompt, user_prompt, cfg=CFG.ai)
+
+                interp_path = os.path.join(CFG.table_dir, "enrichment", "ai_interpretation.txt")
+                os.makedirs(os.path.dirname(interp_path), exist_ok=True)
+                with open(interp_path, "w") as f:
+                    f.write(interpretation)
+                log.info("AI interpretation saved to %s", interp_path)
+
+                summary_lines = [f"Biological Interpretation — {'scRNA-seq enrichment'}"]
+                summary_lines.append("=" * 60)
+                summary_lines.append(interpretation[:2000])
+                summary_path = os.path.join(CFG.table_dir, "enrichment", "ai_interpretation_summary.txt")
+                with open(summary_path, "w") as f:
+                    f.write("\n".join(summary_lines))
+        except Exception as e:
+            log.warning("AI interpretation skipped: %s", e)
+
     log.info("Step 09 完成, 耗时 %.1fs", time.time() - t0)
 
 
