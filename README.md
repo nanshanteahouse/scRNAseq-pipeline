@@ -24,7 +24,7 @@
 |------|------|------|------|------|
 | 00 | `00_load.py` | 原始数据 (MTX/CSV/h5ad) | `00_raw.h5ad` | 加载三种格式 + 样本/阶段映射 |
 | 01 | `01_doublet.py` | `00_raw.h5ad` | `01_doublet.h5ad` | Scrublet 双细胞检测 (per sample) |
-| 02 | `01_qc.py` | `01_doublet.h5ad` | `01_qc.h5ad` | QC 过滤 (先去 doublet，再按 MT%/基因数/复杂度过滤) |
+| 02 | `02_qc.py` | `01_doublet.h5ad` | `01_qc.h5ad` | QC 过滤 (先去 doublet，再按 MT%/基因数/复杂度过滤) |
 | 03 | `03_integrate.py` | `01_qc.h5ad` | `03_integrated.h5ad` | 归一化 + HVG + PCA + Harmony 批次校正 |
 | 04 | `04_cluster_umap.py` | `03_integrated.h5ad` | `04_clustered.h5ad` | 多参数 UMAP + 多分辨率 Leiden 聚类 |
 | 05 | `05_annotate_major.py` | `04_clustered.h5ad` | `05_annotated.h5ad` | AI/Score_genes 双模式 major type 注释 |
@@ -33,8 +33,6 @@
 | 08 | `08_trajectory.py` | `04_clustered.h5ad` | `05_final.h5ad` | PAGA + DPT + 分支分析 |
 | 09 | `09_enrichment.py` | `marker_genes_per_group.csv` | `enrichment_*.csv` + 图片 | GO/KEGG 通路富集 (GSEApy) |
 | 10 | `06_exploratory.py` | `05_annotated.h5ad` | CSV + 图片 | 组成分析 + QC + 标记探索 |
-
-> **关于 step 02**：步骤索引为 `2`，但脚本复用了 `01_qc.py`（doublet 检测 + QC 过滤作为独立的两步共用同一入口，通过配置控制行为）。
 
 ---
 
@@ -269,7 +267,7 @@ class AIConfig:
 ├── scripts/
 │   ├── 00_load.py
 │   ├── 01_doublet.py
-│   ├── 01_qc.py             # 复用：step 01 doublet + step 02 QC
+│   ├── 02_qc.py             # step 02：QC 过滤 (doublet 已去除)
 │   ├── 03_integrate.py
 │   ├── 04_cluster_umap.py
 │   ├── 05_annotate_major.py # AI + Score_genes 双模式
