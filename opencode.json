@@ -1,0 +1,9 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "skills": {
+    "scRNAseq-interactive": {
+      "description": "MUST LOAD when user requests single-cell RNA-seq analysis, cell type annotation, differential expression, trajectory analysis, or pathway enrichment. Drives a 5-phase interactive scRNA-seq analysis workflow from QC to biological interpretation.",
+      "location": "SKILL.md"
+    }
+  }
+}

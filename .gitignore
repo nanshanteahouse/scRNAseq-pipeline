@@ -34,6 +34,9 @@ outputs/
 # Sisyphus plans
 .sisyphus/
 
+# OpenCode
+.omo/
+
 # Cache
 cache/
 *.h5ad
