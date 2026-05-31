@@ -37,6 +37,9 @@ outputs/
 # OpenCode
 .omo/
 
+# Projects (user-specific analysis configs and outputs)
+projects/
+
 # Cache
 cache/
 *.h5ad
