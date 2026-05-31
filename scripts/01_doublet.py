@@ -2,7 +2,7 @@
 """
 Step 01a: Scrublet 双细胞检测 (per sample, joblib 并行)
 =========================================================
-从 01_qc.py 中独立出的 Scrublet 步骤，不含 QC 指标计算或过滤。
+从 02_qc.py 中独立出的 Scrublet 步骤，不含 QC 指标计算或过滤。
 
 输入: 00_raw.h5ad
 输出: 01_doublet.h5ad (含 doublet_scores / predicted_doublet 列)
