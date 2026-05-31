@@ -31,6 +31,9 @@ results/figures/
 results/tables/
 outputs/
 
+# Sisyphus plans
+.sisyphus/
+
 # Cache
 cache/
 *.h5ad
