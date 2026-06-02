@@ -182,7 +182,7 @@ python run_pipeline.py --step 2 --config config_project.py
 python run_pipeline.py --step 3 --config config_project.py
 ```
 
-- `regress_out` → `normalize_total` → `log1p` → 选 HVG → PCA → Harmony
+- 选 HVG → `regress_out` (HVG 子集, 内存优化) → `normalize_total` → `log1p` → PCA → Harmony
 - 保留 `.raw` 全基因表达
 - 输出 `03_integrated.h5ad`，含 `X_pca` 和 `X_pca_harmony`
 
@@ -381,7 +381,7 @@ for cell_type in selected_types:
     sub = adata[adata.obs['cell_type'] == cell_type]
 
     # 2. 重新 PCA + neighbors + multi-resolution UMAP + Leiden
-    sc.pp.neighbors(sub, n_pcs=50)
+    sc.pp.neighbors(sub, n_pcs=min(30, n_cells-2))
     sc.tl.leiden(sub, resolution=[0.2, 0.4, 0.8])
 
     # 3. AI 重新注释亚型

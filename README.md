@@ -201,6 +201,8 @@ results/
 | 富集分析 | GSEApy (Enrichr API) + pre-ranked GSEA，双模式覆盖 | 新增 |
 | 富集回退 | 当 CSV 缺失时自动从 h5ad 计算标记基因再跑富集 | 新增 |
 | AI 交互工作流 | 5-Phase 交互式分析，agent 驱动 + 用户决策 | 新增 |
+| regress_out 在 HVG 子集 | 全基因 QR 分解 → 仅 HVG (~4000 基因) 回归，峰值内存降 ~7× | 性能优化 |
+| 并行计算优化 | ThreadPool/ProcessPool/joblib 并行化 UMAP、DE、富集 API 调用 | 性能优化 |
 
 ---
 
