@@ -79,6 +79,7 @@ class Config:
 
     # h5ad 格式 (data_format='h5ad')
     input_h5ad: str = ""                 # 直接读取已有的 h5ad
+    backed: str = ""                     # h5ad 延迟加载模式: ''=全量, 'r'=只读backed (超大数据集用)
 
     # ═══════════════════════════════════════════════════════════════════
     #  样本元数据映射
@@ -214,6 +215,8 @@ class Config:
     n_jobs: int = 24
     random_seed: int = 42
     scanpy_verbosity: int = 2            # 0=quiet, 1=warn, 2=info, 3=hint
+    force_csr: bool = True               # 强制 X 为 CSR 格式（行优先，细胞级操作最优）
+    use_float32: bool = False            # 强制 float32 精度（节省 ~50% 内存，默认关闭）
 
     # ═══════════════════════════════════════════════════════════════════
     #  AI 配置

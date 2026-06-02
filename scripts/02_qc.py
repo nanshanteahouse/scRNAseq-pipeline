@@ -37,14 +37,13 @@ def compute_qc_metrics(adata, log):
 
 
 def filter_cells(adata, cfg, log):
-    # Step 1: Filter predicted doublets first (from Step 01)
     n_before = adata.n_obs
-    adata = adata[~adata.obs['predicted_doublet']].copy()
-    n_doublet = n_before - adata.n_obs
+
+    f_doublet = adata.obs['predicted_doublet']
+    n_doublet = f_doublet.sum()
     log.info("双细胞过滤: 移除 %d 个预测双细胞 (%.1f%%)",
              n_doublet, 100 * n_doublet / n_before if n_before else 0)
 
-    # Step 2: QC threshold filtering
     log.info("应用 QC 过滤...")
     min_g = cfg.min_genes
     max_g = cfg.max_genes
@@ -64,7 +63,8 @@ def filter_cells(adata, cfg, log):
     log.info("    复杂度 < %.2f:    %6d (%.1f%%)", min_cpx, f_cpx.sum(), 100*f_cpx.mean())
     log.info("    合计(去重):       %6d (%.1f%%)", f_any.sum(), 100*f_any.mean())
 
-    adata = adata[~f_any].copy()
+    mask = ~f_doublet & ~f_any
+    adata = adata[mask].copy()
     log.info("  QC 过滤后: %d 细胞", adata.n_obs)
     return adata
 

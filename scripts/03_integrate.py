@@ -5,13 +5,14 @@ Step 03: 归一化 + HVG 选择 + PCA + Harmony 批次校正（整合版）
 整合原 Step 02 + Step 03 为单一步骤，并加入 regress_out。
 
 关键顺序 (继承 GSE169109 最佳实践):
-  1. raw counts → regress_out (total_counts, pct_counts_mt)
-  2. raw counts → 找 HVG (seurat_v3, batch-aware)
-  3. normalize_total → log1p
-  4. adata.raw = adata  (保留全基因)
-  5. X 只保留 HVG 用于下游降维
-  6. PCA (n_pcs_full, elbow 图)
-  7. Harmony 批次校正
+  1. raw counts → 找 HVG (seurat_v3, batch-aware)
+  2. 保存全基因表达副本用于 .raw
+  3. X 只保留 HVG 用于下游降维
+  4. regress_out (total_counts, pct_counts_mt) on HVG 子集 ← 内存优化
+  5. normalize_total → log1p on HVG 子集
+  6. normalize_total → log1p on 全基因副本, 赋值 .raw
+  7. PCA (n_pcs_full, elbow 图)
+  8. Harmony 批次校正
 
 输入: 02_qc.h5ad
 输出: 03_integrated.h5ad (X = log1p(normalized) on HVGs, .raw = 全基因,
@@ -22,6 +23,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from utils import setup_logger, resolve_config, safe_write, safe_plot
 import scanpy as sc
 import matplotlib.pyplot as plt
+import scipy.sparse as sp
 
 def main():
     t0 = time.time()
@@ -35,16 +37,6 @@ def main():
     # ── 读取 ──
     adata = sc.read(CFG.qc_h5ad)
     log.info("加载: %d 细胞 × %d 基因", adata.n_obs, adata.n_vars)
-
-    # ── Regress out 技术变异 ──
-    # 在 raw counts 上回归 total_counts 和 pct_counts_mt，移除技术噪音
-    # 某些数据集可能没有 pct_counts_mt，用 try/except 兜底
-    try:
-        log.info("回归技术协变量: total_counts, pct_counts_mt ...")
-        sc.pp.regress_out(adata, ['total_counts', 'pct_counts_mt'])
-        log.info("  regress_out 完成")
-    except Exception as e:
-        log.warning("regress_out 失败（跳过）: %s", e)
 
     # ── HVG ──
     log.info("选择 top %d HVGs (flavor=%s, batch_key=%s)...",
@@ -60,18 +52,42 @@ def main():
     n_hvg = adata.var['highly_variable'].sum()
     log.info("HVG 数量: %d", n_hvg)
 
-    # ── 归一化 ──
+    # ── 保存全基因表达副本用于 .raw ──
+    adata_full = adata.copy()
+    log.info("已保存全基因表达副本用于 .raw")
+
+    # ── X 缩小到 HVGs ──
+    adata = adata[:, adata.var['highly_variable']].copy()
+    log.info("X 缩小到 HVGs: %s", adata.shape)
+
+    # ── Regress out 技术变异 (HVG 子集) ──
+    # 在 HVG 子集上回归 total_counts 和 pct_counts_mt，移除非特异技术噪音
+    # 某些数据集可能没有 pct_counts_mt，用 try/except 兜底
+    try:
+        log.info("回归技术协变量: total_counts, pct_counts_mt ...")
+        sc.pp.regress_out(adata, ['total_counts', 'pct_counts_mt'])
+        log.info("  regress_out 完成")
+    except Exception as e:
+        log.warning("regress_out 失败（跳过）: %s", e)
+
+    # ── regress_out 后降回 float32（regress_out 会产生 float64 中间体） ──
+    if getattr(CFG, 'use_float32', False):
+        if sp.issparse(adata.X):
+            adata.X = adata.X.astype('float32', copy=False)
+        else:
+            adata.X = adata.X.astype('float32', copy=False)
+        log.info("  X 精度已恢复为 float32")
+
+    # ── 归一化 (HVG 子集) ──
     log.info("归一化 (target_sum=%.0f) + log1p...", CFG.normalize_target_sum)
     sc.pp.normalize_total(adata, target_sum=CFG.normalize_target_sum)
     sc.pp.log1p(adata)
 
-    # ── 保留全基因到 .raw ──
-    adata.raw = adata
-    log.info(".raw 已保存 (全基因: %d vars)", adata.raw.n_vars)
-
-    # ── X 只保留 HVG ──
-    adata = adata[:, adata.var['highly_variable']].copy()
-    log.info("X 缩小到 HVGs: %s", adata.shape)
+    # ── 归一化全基因副本并保留到 .raw ──
+    sc.pp.normalize_total(adata_full, target_sum=CFG.normalize_target_sum)
+    sc.pp.log1p(adata_full)
+    adata.raw = adata_full
+    log.info(".raw 已保存 (全基因: %d vars)", adata_full.n_vars)
 
     # ── PCA ──
     log.info("PCA (%d components)...", CFG.n_pcs_full)

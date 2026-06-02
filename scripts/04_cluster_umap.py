@@ -17,6 +17,65 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 from sklearn.metrics import silhouette_score
+from concurrent.futures import ProcessPoolExecutor, as_completed
+import copy
+
+
+def _umap_leiden_one(adata, use_rep, n_pcs_use, random_seed, leiden_flavor, n, res):
+    """Compute UMAP + Leiden + silhouette for one resolution in a subprocess.
+
+    Returns a dict with keys: success, umap_key, leiden_key, umap_coords,
+    leiden_labels, n_clusters, silhouette_score.
+    """
+    import scanpy as sc
+    from sklearn.metrics import silhouette_score
+    import numpy as np
+
+    umap_key = f'umap_{n}_{res}'
+    leiden_key = f'leiden_{n}_{res}'
+
+    try:
+        sc.tl.umap(adata, min_dist=0.3, spread=1.0, random_state=random_seed)
+        umap_coords = adata.obsm['X_umap'].copy()
+
+        sc.tl.leiden(adata, resolution=res, key_added=leiden_key,
+                     random_state=random_seed, flavor=leiden_flavor)
+        leiden_labels = adata.obs[leiden_key].copy()
+        n_clusters = int(leiden_labels.nunique())
+
+        # Silhouette score (in PCA space, sampling for large datasets)
+        sil_score = None
+        try:
+            pca_key = use_rep
+            if adata.n_obs > 10000:
+                rng = np.random.RandomState(random_seed)
+                idx = rng.choice(adata.n_obs, 10000, replace=False)
+                sil_score = float(silhouette_score(
+                    adata.obsm[pca_key][idx, :n_pcs_use],
+                    leiden_labels.values[idx],
+                ))
+            else:
+                sil_score = float(silhouette_score(
+                    adata.obsm[pca_key][:, :n_pcs_use],
+                    leiden_labels.values,
+                ))
+        except Exception:
+            pass
+
+        return {
+            'success': True,
+            'umap_key': umap_key,
+            'leiden_key': leiden_key,
+            'umap_coords': umap_coords,
+            'leiden_labels': leiden_labels,
+            'n_clusters': n_clusters,
+            'silhouette_score': sil_score,
+        }
+    except Exception as e:
+        return {
+            'success': False,
+            'error': str(e),
+        }
 
 
 def main():
@@ -52,62 +111,64 @@ def main():
                 adata, n_neighbors=n,
                 n_pcs=CFG.n_pcs_use, use_rep=use_rep,
                 random_state=CFG.random_seed,
+                n_jobs=getattr(CFG, 'n_jobs', 1),
             )
         except Exception as e:
             log.error("邻居图计算失败 (n_neighbors=%d): %s", n, e)
             continue
 
+        # ── 并行计算所有 resolution 的 UMAP + Leiden + Silhouette ──
+        n_workers = min(
+            len(resolutions_grid),
+            getattr(CFG, 'n_jobs', 4) // len(n_neighbors_grid) or 2
+        )
+        log.info("  并行计算 %d 个 resolution (workers=%d)...", len(resolutions_grid), n_workers)
+        futures = {}
+        with ProcessPoolExecutor(max_workers=n_workers) as pool:
+            for res in resolutions_grid:
+                adata_copy = copy.deepcopy(adata)
+                future = pool.submit(
+                    _umap_leiden_one, adata_copy,
+                    use_rep, CFG.n_pcs_use, CFG.random_seed,
+                    CFG.leiden_flavor, n, res
+                )
+                futures[future] = res
+
+            for future in as_completed(futures):
+                res = futures[future]
+                try:
+                    result = future.result()
+                except Exception as e:
+                    log.error("  UMAP/Leiden 进程失败 (n=%d, r=%.1f): %s", n, res, e)
+                    continue
+
+                if not result['success']:
+                    log.error("  UMAP/Leiden 失败 (n=%d, r=%.1f): %s", n, res, result.get('error', ''))
+                    continue
+
+                # 应用回 adata
+                adata.obsm[result['umap_key']] = result['umap_coords']
+                adata.obs[result['leiden_key']] = result['leiden_labels']
+
+                n_clusters = result['n_clusters']
+                sil_score = result['silhouette_score']
+                score_str = f", silhouette={sil_score:.4f}" if sil_score is not None else ""
+                log.info("  n=%d, r=%.1f → %d clusters%s", n, res, n_clusters, score_str)
+
+                results_summary.append({
+                    'n_neighbors': n,
+                    'resolution': res,
+                    'n_clusters': n_clusters,
+                    'silhouette_score': sil_score,
+                })
+
+        # ── 单参数组合 UMAP 图 (逐 resolution，数据已就绪) ──
         for res in resolutions_grid:
-            umap_key = f'umap_{n}_{res}'
             leiden_key = f'leiden_{n}_{res}'
-
-            log.info("  UMAP + Leiden (n=%d, r=%.1f)...", n, res)
-            try:
-                # UMAP
-                sc.tl.umap(adata, min_dist=0.3, spread=1.0,
-                           random_state=CFG.random_seed)
-                # 保留当前 UMAP 坐标
-                adata.obsm[umap_key] = adata.obsm['X_umap'].copy()
-
-                # Leiden 聚类
-                sc.tl.leiden(adata, resolution=res, key_added=leiden_key,
-                             random_state=CFG.random_seed,
-                             flavor=CFG.leiden_flavor)
-            except Exception as e:
-                log.error("  UMAP/Leiden 失败 (n=%d, r=%.1f): %s", n, res, e)
+            umap_key = f'umap_{n}_{res}'
+            if leiden_key not in adata.obs or umap_key not in adata.obsm:
                 continue
 
-            n_clusters = adata.obs[leiden_key].nunique()
-            log.info("    → %d clusters", n_clusters)
-
-            # Silhouette score (在 PCA 空间上计算，大数据集抽样)
-            sil_score = None
-            try:
-                pca_key = use_rep
-                if adata.n_obs > 10000:
-                    rng = np.random.RandomState(CFG.random_seed)
-                    idx = rng.choice(adata.n_obs, 10000, replace=False)
-                    sil_score = silhouette_score(
-                        adata.obsm[pca_key][idx, :CFG.n_pcs_use],
-                        adata.obs[leiden_key].values[idx],
-                    )
-                else:
-                    sil_score = silhouette_score(
-                        adata.obsm[pca_key][:, :CFG.n_pcs_use],
-                        adata.obs[leiden_key].values,
-                    )
-                log.info("    silhouette_score=%.4f", sil_score)
-            except Exception as e:
-                log.warning("    silhouette_score 计算失败: %s", e)
-
-            results_summary.append({
-                'n_neighbors': n,
-                'resolution': res,
-                'n_clusters': n_clusters,
-                'silhouette_score': sil_score,
-            })
-
-            # 单参数组合 UMAP 图
             try:
                 safe_plot(sc.pl.umap, adata, color=leiden_key, show=False,
                           title=f'UMAP (n_neighbors={n}, resolution={res})')

@@ -54,23 +54,28 @@ Marker genes per cluster (top 20 by Wilcoxon score):
 Return ONLY a valid JSON object mapping each cluster ID to its annotation. Include ALL cluster IDs."""
 
 
-def build_annotation_prompt(adata, tissue: str, species: str):
+def build_annotation_prompt(adata, tissue: str, species: str,
+                            precomputed_rank: bool = False):
     """
     构建聚类注释的完整提示词对。
 
-    自动运行 Wilcoxon rank-sum 检验识别各聚类的标记基因，
-    然后组装 system_prompt 和 user_prompt 供 LLM 调用。
+    可自动运行或跳过 Wilcoxon rank-sum 检验。当调用者已经执行过
+    rank_genes_groups 时，传入 precomputed_rank=True 避免重复计算，
+    直接使用 adata.uns['rank_genes_groups'] 中的已有结果。
 
     参数:
         adata:  已聚类（leiden 列）的 AnnData 对象
         tissue: 组织名称（如 "hypothalamus", "retina"）
         species: 物种名称（如 "human", "mouse"）
+        precomputed_rank: 若为 True，跳过 rank_genes_groups 计算，
+                          使用 adata 中已有的结果（默认 False）
 
     返回:
         (system_prompt, user_prompt) 二元组，可直接传入 ai_query()
     """
-    # ── 计算 marker 基因 ──────────────────────────────────────────────
-    sc.tl.rank_genes_groups(adata, groupby="leiden", method="wilcoxon")
+    # ── 计算 marker 基因（如尚未计算）────────────────────────────────
+    if not precomputed_rank:
+        sc.tl.rank_genes_groups(adata, groupby="leiden", method="wilcoxon")
 
     # ── 提取每聚类 top 20 marker ──────────────────────────────────────
     clusters = sorted(adata.obs["leiden"].unique(),

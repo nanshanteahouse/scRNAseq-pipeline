@@ -75,11 +75,12 @@ def find_root_cells(adata, CFG, log):
             for cl in adata.obs[group_col].cat.categories:
                 mask = adata.obs[group_col] == cl
                 sub = adata.raw[mask]
-                scores = []
-                for g in markers_present:
-                    gene_idx = list(adata.raw.var_names).index(g)
-                    expr = sub.X[:, gene_idx]
-                    scores.append(np.mean(expr.toarray() if issparse(expr) else expr))
+                gene_indices = [list(adata.raw.var_names).index(g) for g in markers_present]
+                gene_exprs = sub.X[:, gene_indices]
+                if issparse(gene_exprs):
+                    scores = gene_exprs.mean(axis=0).A1.tolist()
+                else:
+                    scores = gene_exprs.mean(axis=0).tolist()
                 cluster_scores.append((cl, np.mean(scores)))
             cluster_scores.sort(key=lambda x: -x[1])
             best_cl = cluster_scores[0][0]

@@ -16,6 +16,7 @@ import scanpy as sc
 import pandas as pd
 import numpy as np
 from scipy.io import mmread
+import scipy.sparse as sp
 
 def main():
     t0 = time.time()
@@ -103,12 +104,24 @@ def main():
 
     elif CFG.data_format == "h5ad":
         log.info("从 h5ad 加载: %s", CFG.input_h5ad)
-        adata = sc.read(CFG.input_h5ad)
+        backed = getattr(CFG, 'backed', None) or None
+        adata = sc.read(CFG.input_h5ad, backed=backed) if backed else sc.read(CFG.input_h5ad)
         log.info("加载完成: %d 细胞 × %d 基因", adata.n_obs, adata.n_vars)
 
     else:
         log.error("未知 data_format: %s", CFG.data_format)
         sys.exit(1)
+
+    # ── 统一稀疏格式: CSR (行优先) ──
+    if getattr(CFG, 'force_csr', True) and sp.issparse(adata.X):
+        if not sp.isspmatrix_csr(adata.X):
+            adata.X = adata.X.tocsr()
+            log.info("X 格式已转换为 CSR")
+
+    # ── 可选 float32 精度 ──
+    if getattr(CFG, 'use_float32', False):
+        adata.X = adata.X.astype('float32', copy=False) if sp.issparse(adata.X) else adata.X
+        log.info("X 精度已转换为 float32")
 
     # ── 保存 ──
     log.info("保存到 %s...", CFG.raw_h5ad)

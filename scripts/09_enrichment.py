@@ -24,6 +24,7 @@ Step 09: GO/KEGG 富集分析
 import json
 import sys, os, time, argparse, warnings
 from typing import Optional
+from concurrent.futures import ThreadPoolExecutor, as_completed
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from utils import setup_logger, resolve_config
 import numpy as np
@@ -45,6 +46,54 @@ def read_marker_csv(table_dir: str, log) -> pd.DataFrame:
     return df
 
 
+def _ora_one_group(
+    grp,
+    grp_df: pd.DataFrame,
+    gene_set: str,
+    CFG,
+    log,
+):
+    """Run ORA for a single group via Enrichr API (used by ThreadPoolExecutor)."""
+    import gseapy as gp
+
+    grp_up = (
+        grp_df[grp_df['logfoldchanges'] > 0]
+        .nsmallest(CFG.enrichment_n_top_genes, 'pvals_adj')
+        ['names']
+        .str.upper()
+        .dropna()
+        .unique()
+        .tolist()
+    )
+    if len(grp_up) < CFG.enrichment_min_size:
+        log.info("  %s: 上调基因不足 (%d < %d), 跳过 ORA",
+                 grp, len(grp_up), CFG.enrichment_min_size)
+        return (grp, None)
+
+    try:
+        enr = gp.enrichr(
+            gene_list=grp_up,
+            gene_sets=gene_set,
+            organism=CFG.enrichment_organism,
+            outdir=None,
+            no_plot=True,
+            verbose=False,
+        )
+    except Exception as e:
+        log.warning("  %s ORA 失败 (%s): %s", grp, gene_set, e)
+        return (grp, None)
+
+    res = enr.results
+    if res is None or len(res) == 0:
+        return (grp, None)
+    res['cluster'] = grp
+    res['n_genes_input'] = len(grp_up)
+    n_sig = (res['Adjusted P-value'] < CFG.enrichment_pval_cutoff).sum()
+    log.info("  %s: %d/%d 显著通路 (ORA, %s)",
+             grp, n_sig, len(res), gene_set.split('_')[0])
+    return (grp, res)
+
+
 def run_ora(
     marker_df: pd.DataFrame,
     gene_set: str,
@@ -60,46 +109,23 @@ def run_ora(
     import gseapy as gp
 
     groups = marker_df['group'].unique()
-    all_rows = []
+    max_workers = min(5, getattr(CFG, 'n_jobs', 4))
+    results = {}
 
-    for grp in groups:
-        grp_df = marker_df[marker_df['group'] == grp]
-        grp_up = (
-            grp_df[grp_df['logfoldchanges'] > 0]
-            .nsmallest(CFG.enrichment_n_top_genes, 'pvals_adj')
-            ['names']
-            .str.upper()
-            .dropna()
-            .unique()
-            .tolist()
-        )
-        if len(grp_up) < CFG.enrichment_min_size:
-            log.info("  %s: 上调基因不足 (%d < %d), 跳过 ORA",
-                     grp, len(grp_up), CFG.enrichment_min_size)
-            continue
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        future_to_grp = {
+            executor.submit(
+                _ora_one_group, grp,
+                marker_df[marker_df['group'] == grp],
+                gene_set, CFG, log,
+            ): grp
+            for grp in groups
+        }
+        for future in as_completed(future_to_grp):
+            grp, res = future.result()
+            results[grp] = res
 
-        try:
-            enr = gp.enrichr(
-                gene_list=grp_up,
-                gene_sets=gene_set,
-                organism=CFG.enrichment_organism,
-                outdir=None,
-                no_plot=True,
-                verbose=False,
-            )
-        except Exception as e:
-            log.warning("  %s ORA 失败 (%s): %s", grp, gene_set, e)
-            continue
-
-        res = enr.results
-        if res is None or len(res) == 0:
-            continue
-        res['cluster'] = grp
-        res['n_genes_input'] = len(grp_up)
-        all_rows.append(res)
-        n_sig = (res['Adjusted P-value'] < CFG.enrichment_pval_cutoff).sum()
-        log.info("  %s: %d/%d 显著通路 (ORA, %s)",
-                 grp, n_sig, len(res), gene_set.split('_')[0])
+    all_rows = [results[grp] for grp in groups if results.get(grp) is not None]
 
     if not all_rows:
         log.warning("  ORA 无结果 (gene_set=%s)", gene_set)
@@ -107,6 +133,53 @@ def run_ora(
 
     combined = pd.concat(all_rows, ignore_index=True)
     return combined
+
+
+def _prerank_one_group(
+    grp,
+    grp_df: pd.DataFrame,
+    gene_set: str,
+    CFG,
+    log,
+):
+    """Run pre-ranked GSEA for a single group (used by ThreadPoolExecutor)."""
+    import gseapy as gp
+
+    grp_df = grp_df.dropna(subset=['scores', 'names'])
+    if len(grp_df) < CFG.enrichment_min_size:
+        log.info("  %s: 基因不足 (%d < %d), 跳过 GSEA",
+                 grp, len(grp_df), CFG.enrichment_min_size)
+        return (grp, None)
+
+    rnk = grp_df.set_index('names')['scores'].drop_duplicates()
+    rnk.index = rnk.index.str.upper()
+
+    try:
+        pre_res = gp.prerank(
+            rnk=rnk,
+            gene_sets=gene_set,
+            min_size=CFG.enrichment_min_size,
+            max_size=CFG.enrichment_max_size,
+            permutation_num=CFG.enrichment_permutations,
+            threads=1,
+            outdir=None,
+            seed=CFG.random_seed,
+            verbose=False,
+            no_plot=True,
+        )
+    except Exception as e:
+        log.warning("  %s GSEA 失败 (%s): %s", grp, gene_set, e)
+        return (grp, None)
+
+    res = pre_res.res2d
+    if res is None or len(res) == 0:
+        return (grp, None)
+    res['cluster'] = grp
+    res['n_genes_input'] = len(rnk)
+    n_sig = (res['FDR q-val'] < CFG.enrichment_pval_cutoff).sum()
+    log.info("  %s: %d/%d 显著通路 (GSEA, %s)",
+             grp, n_sig, len(res), gene_set.split('_')[0])
+    return (grp, res)
 
 
 def run_prerank(
@@ -124,45 +197,23 @@ def run_prerank(
     import gseapy as gp
 
     groups = marker_df['group'].unique()
-    all_rows = []
+    max_workers = min(5, getattr(CFG, 'n_jobs', 4))
+    results = {}
 
-    for grp in groups:
-        grp_df = marker_df[marker_df['group'] == grp].copy()
-        grp_df = grp_df.dropna(subset=['scores', 'names'])
-        if len(grp_df) < CFG.enrichment_min_size:
-            log.info("  %s: 基因不足 (%d < %d), 跳过 GSEA",
-                     grp, len(grp_df), CFG.enrichment_min_size)
-            continue
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        future_to_grp = {
+            executor.submit(
+                _prerank_one_group, grp,
+                marker_df[marker_df['group'] == grp],
+                gene_set, CFG, log,
+            ): grp
+            for grp in groups
+        }
+        for future in as_completed(future_to_grp):
+            grp, res = future.result()
+            results[grp] = res
 
-        rnk = grp_df.set_index('names')['scores'].drop_duplicates()
-        rnk.index = rnk.index.str.upper()
-
-        try:
-            pre_res = gp.prerank(
-                rnk=rnk,
-                gene_sets=gene_set,
-                min_size=CFG.enrichment_min_size,
-                max_size=CFG.enrichment_max_size,
-                permutation_num=CFG.enrichment_permutations,
-                threads=max(1, CFG.n_jobs),
-                outdir=None,
-                seed=CFG.random_seed,
-                verbose=False,
-                no_plot=True,
-            )
-        except Exception as e:
-            log.warning("  %s GSEA 失败 (%s): %s", grp, gene_set, e)
-            continue
-
-        res = pre_res.res2d
-        if res is None or len(res) == 0:
-            continue
-        res['cluster'] = grp
-        res['n_genes_input'] = len(rnk)
-        all_rows.append(res)
-        n_sig = (res['FDR q-val'] < CFG.enrichment_pval_cutoff).sum()
-        log.info("  %s: %d/%d 显著通路 (GSEA, %s)",
-                 grp, n_sig, len(res), gene_set.split('_')[0])
+    all_rows = [results[grp] for grp in groups if results.get(grp) is not None]
 
     if not all_rows:
         log.warning("  GSEA 无结果 (gene_set=%s)", gene_set)

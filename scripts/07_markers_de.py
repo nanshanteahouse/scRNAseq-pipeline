@@ -16,8 +16,9 @@ from utils import setup_logger, resolve_config, safe_plot
 import numpy as np
 import pandas as pd
 import scanpy as sc
-from scipy.stats import spearmanr
+from scipy.stats import rankdata
 import scipy.sparse as sp
+from joblib import Parallel, delayed
 
 def layer1_markers(adata, CFG, log, group_col):
     """全细胞类型标记基因 (Wilcoxon, each vs rest) for a given annotation column"""
@@ -40,6 +41,34 @@ def layer1_markers(adata, CFG, log, group_col):
             log.info("  %s top5: %s", group, ', '.join(top5['names'].values))
     return result
 
+
+def _layer2_one_pair(ct, s1, s2, adata, ct_col, CFG, log):
+    """Worker for parallel Layer 2 paired DE (one cell type, one stage pair)."""
+    ct_mask = adata.obs[ct_col] == ct
+    ct_adata = adata[ct_mask].copy()
+    if ct_adata.n_obs < 20:
+        return None
+    mask = ct_adata.obs['stage'].isin([s1, s2])
+    sub = ct_adata[mask].copy()
+    if sub.obs['stage'].value_counts().min() < 5:
+        return None
+    try:
+        sc.tl.rank_genes_groups(
+            sub, groupby='stage', groups=[s2], reference=s1,
+            method='t-test', n_genes=CFG.de_n_genes,
+            use_raw=True, random_state=CFG.random_seed,
+        )
+        de_df = sc.get.rank_genes_groups_df(sub, group=s2)
+        if CFG.de_pval_cutoff is not None:
+            de_df = de_df[de_df['pvals_adj'] < CFG.de_pval_cutoff].copy()
+        de_df['cell_type'] = ct
+        de_df['comparison'] = f'{s2}_vs_{s1}'
+        return (f'{ct}_{s2}_vs_{s1}', de_df)
+    except Exception as e:
+        log.debug("  %s %s vs %s 失败: %s", ct, s2, s1, e)
+        return None
+
+
 def layer2_pairwise_de(adata, CFG, log, primary_col=None):
     """相邻发育阶段配对差异表达"""
     if 'stage' not in adata.obs or not CFG.stage_order:
@@ -51,30 +80,22 @@ def layer2_pairwise_de(adata, CFG, log, primary_col=None):
     log.info("[Layer 2] 相邻阶段配对 DE (%d 对, %d 类)...",
              len(stage_pairs), adata.obs[ct_col].nunique())
 
-    for ct in adata.obs[ct_col].cat.categories:
-        ct_mask = adata.obs[ct_col] == ct
-        ct_adata = adata[ct_mask].copy()
-        if ct_adata.n_obs < 20:
-            continue
-        for s1, s2 in stage_pairs:
-            mask = ct_adata.obs['stage'].isin([s1, s2])
-            sub = ct_adata[mask].copy()
-            if sub.obs['stage'].value_counts().min() < 5:
-                continue
-            try:
-                sc.tl.rank_genes_groups(
-                    sub, groupby='stage', groups=[s2], reference=s1,
-                    method='t-test', n_genes=CFG.de_n_genes,
-                    use_raw=True, random_state=CFG.random_seed,
-                )
-                de_df = sc.get.rank_genes_groups_df(sub, group=s2)
-                if CFG.de_pval_cutoff is not None:
-                    de_df = de_df[de_df['pvals_adj'] < CFG.de_pval_cutoff].copy()
-                de_df['cell_type'] = ct
-                de_df['comparison'] = f'{s2}_vs_{s1}'
-                all_results[f'{ct}_{s2}_vs_{s1}'] = de_df
-            except Exception as e:
-                log.debug("  %s %s vs %s 失败: %s", ct, s2, s1, e)
+    tasks = [
+        (ct, s1, s2)
+        for ct in adata.obs[ct_col].cat.categories
+        for s1, s2 in stage_pairs
+    ]
+
+    if tasks:
+        n_jobs = min(getattr(CFG, 'n_jobs', 4), len(tasks))
+        results = Parallel(n_jobs=n_jobs, prefer='threads', require='sharedmem')(
+            delayed(_layer2_one_pair)(ct, s1, s2, adata, ct_col, CFG, log)
+            for ct, s1, s2 in tasks
+        )
+        for r in results:
+            if r is not None:
+                key, de_df = r
+                all_results[key] = de_df
 
     if all_results:
         combined = pd.concat(all_results.values(), ignore_index=True)
@@ -111,19 +132,19 @@ def layer3_temporal_trends(adata, CFG, log, primary_col=None):
             s_mask = (stages == s).values
             s_idx = np.flatnonzero(ct_mask.values)[s_mask]
             sub_X = adata.raw[s_idx].X
-            mean_expr = (np.asarray(sub_X.mean(axis=0)).flatten()
-                         if sp.issparse(sub_X)
-                         else sub_X.mean(axis=0))
+            mean_expr = sub_X.mean(axis=0).A1 if sp.issparse(sub_X) else sub_X.mean(axis=0)
             stage_means[s] = mean_expr
 
         stage_nums = np.array([stage_numeric[s] for s in valid_stages])
         mean_matrix = np.stack([stage_means[s] for s in valid_stages], axis=1)
         gene_names = adata.raw.var_names
 
-        corr = np.array([
-            spearmanr(mean_matrix[i], stage_nums)[0]
-            for i in range(len(gene_names))
-        ])
+        # Vectorized Spearman: rank each gene across stages, then Pearson = Spearman
+        ranked_genes = np.apply_along_axis(rankdata, 1, mean_matrix)
+        ranked_stages = rankdata(stage_nums)
+        combined = np.vstack([ranked_genes, ranked_stages.reshape(1, -1)])
+        corr_matrix = np.corrcoef(combined)
+        corr = corr_matrix[:-1, -1]
         corr_idx = np.argsort(corr)[::-1]
         n_top = min(20, len(corr))
 

@@ -36,10 +36,17 @@ def safe_write(adata: sc.AnnData, target: str,
         tmpdir: 临时目录
         compression: h5py 压缩方式 ('gzip' | 'lzf' | None)
     """
-    os.makedirs(tmpdir, exist_ok=True)
-    tmp_path = os.path.join(tmpdir, os.path.basename(target))
-    adata.write(tmp_path, compression=compression)
-    shutil.move(tmp_path, target)
+    # WSL /mnt mounts require tmp+mv to avoid h5py file locking issues.
+    # Native Linux can write directly.
+    _wsl = (target.startswith("/mnt/")
+            or os.environ.get("HDF5_USE_FILE_LOCKING", "").upper() == "FALSE")
+    if _wsl:
+        os.makedirs(tmpdir, exist_ok=True)
+        tmp_path = os.path.join(tmpdir, os.path.basename(target))
+        adata.write(tmp_path, compression=compression)
+        shutil.move(tmp_path, target)
+    else:
+        adata.write(target, compression=compression)
 
     size_mb = os.path.getsize(target) / 1e6
     logger = logging.getLogger(__name__)

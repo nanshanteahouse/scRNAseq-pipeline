@@ -83,7 +83,8 @@ def main():
 
     # ── (e) Neighbors ─────────────────────────────────────────────────
     log.info("Computing neighbor graph (n_pcs=30)...")
-    sc.pp.neighbors(sub, n_pcs=30, random_state=CFG.random_seed)
+    sc.pp.neighbors(sub, n_pcs=30, random_state=CFG.random_seed,
+                    n_jobs=getattr(CFG, 'n_jobs', 1))
 
     # ── (f) UMAP ──────────────────────────────────────────────────────
     log.info("Computing UMAP...")

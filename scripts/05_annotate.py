@@ -86,7 +86,7 @@ def run_subclustering(adata, subcluster_types, resolution, min_cells, log):
 
         log.info("  子聚类 %s (%d cells)...", parent_type, n_cells)
         sub = adata[mask].copy()
-        sc.pp.neighbors(sub, n_pcs=50, use_rep='X_pca_harmony',
+        sc.pp.neighbors(sub, n_pcs=min(30, n_cells - 2), use_rep='X_pca_harmony',
                         random_state=42)
         sc.tl.leiden(sub, resolution=resolution, key_added='subcluster',
                      random_state=42)

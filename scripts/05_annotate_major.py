@@ -148,7 +148,7 @@ def ai_annotate(adata, CFG, logger):
 
     # ── d. 构建提示词 ─────────────────────────────────────────────────
     from ai_prompts import build_annotation_prompt
-    sys_prompt, user_prompt = build_annotation_prompt(adata, tissue, species)
+    sys_prompt, user_prompt = build_annotation_prompt(adata, tissue, species, precomputed_rank=True)
 
     # ── e. 调用 LLM ───────────────────────────────────────────────────
     from ai_caller import ai_query
