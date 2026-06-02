@@ -252,10 +252,14 @@ def plot_ora_bubble(
         max(8, 0.5 * top_per_cluster['cluster'].nunique()),
         max(6, 0.3 * top_per_cluster['Term_short'].nunique()),
     ))
+    overlap_numeric = (
+        top_per_cluster['Overlap']
+        .astype(str).str.split('/').str[0].astype(float)
+    )
     sc = ax.scatter(
         top_per_cluster['cluster'],
         top_per_cluster['Term_short'],
-        s=top_per_cluster['Overlap'] * 30,
+        s=overlap_numeric * 30,
         c=top_per_cluster['-log10_padj'],
         cmap='YlOrRd',
         edgecolors='grey', linewidths=0.5,
