@@ -205,6 +205,9 @@ def main():
     adata = sc.read(CFG.cluster_h5ad)
     log.info("加载: %s — %d 细胞", CFG.cluster_h5ad, adata.n_obs)
 
+    # 设置图输出目录（必须在 plot 调用之前，否则 scanpy save= 默认写到 ./figures/）
+    sc.settings.figdir = CFG.figure_dir
+
     recompute_neighbors(adata, CFG, log)
     run_paga(adata, CFG, log)
     root_mask = find_root_cells(adata, CFG, log)
@@ -212,8 +215,7 @@ def main():
     branch_analysis(adata, CFG, log)
     gene_trends(adata, CFG, log)
 
-    # 最终可视化
-    sc.settings.figdir = CFG.figure_dir
+    # 最终可视化 (figdir 已在上面设置)
     for color in ['stage', 'cell_type', 'cell_type_sub', 'dpt_pseudotime']:
         if color in adata.obs or color in adata.obsm:
             safe_plot(sc.pl.umap, adata, color=color, show=False,
