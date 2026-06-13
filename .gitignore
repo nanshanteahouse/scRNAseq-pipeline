@@ -36,6 +36,7 @@ outputs/
 
 # OpenCode
 .omo/
+AGENTS.md
 
 # Projects (user-specific analysis configs and outputs)
 projects/
