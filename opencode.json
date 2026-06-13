@@ -1,0 +1,9 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "skills": {
+    "scRNAseq-interactive": {
+      "description": "AUTO-LOAD when user mentions: scRNA-seq, 单细胞, single-cell, RNA-seq, 细胞注释, cell annotation, 细胞类型, cell type, 差异表达, DEG, marker genes, 轨迹分析, trajectory, pseudotime, 富集分析, enrichment, GO/KEGG, GSEA, QC, quality control, 双细胞, doublet, Scrublet, 聚类, clustering, UMAP, Leiden, 降维, PCA, Harmony, 批次校正, batch correction, HVG, normalize, 数据加载, 10X, 10X Genomics, h5ad, scanpy, 整合, integration, subcluster, 亚型, 发育, development, 分化, differentiation, pathway, 信号通路. Drives a 5-phase interactive scRNA-seq analysis workflow from QC to biological interpretation.",
+      "location": "SKILL.md"
+    }
+  }
+}
