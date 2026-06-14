@@ -142,8 +142,8 @@ def ai_annotate(adata, CFG, logger):
     logger.info("Marker 基因已保存: %s", marker_csv)
 
     # ── c. 获取组织 & 物种 ────────────────────────────────────────────
-    tissue = getattr(CFG, 'tissue', 'unknown')
-    species = getattr(CFG, 'species', 'human')
+    tissue = CFG.tissue
+    species = CFG.species
     logger.info("注释上下文: tissue=%s, species=%s", tissue, species)
 
     # ── d. 构建提示词 ─────────────────────────────────────────────────

@@ -20,6 +20,7 @@ ai_caller.py — 统一 LLM 调用模块
 
 import os
 import sys
+import time
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 
@@ -59,11 +60,26 @@ def ai_query(system_prompt: str, user_prompt: str, cfg) -> str:
         {"role": "user",   "content": user_prompt},
     ]
 
-    resp = client.chat.completions.create(
-        model=cfg.model,
-        messages=messages,
-        max_tokens=cfg.max_tokens,
-        temperature=cfg.temperature,
-    )
+    # Compute effective max_tokens: if reasoning_budget is set, add it to max_tokens
+    reasoning_budget = getattr(cfg, "reasoning_budget", 0) or 0
+    effective_max_tokens = cfg.max_tokens + reasoning_budget
 
-    return resp.choices[0].message.content
+    # Retry loop: some vLLM deployments return content=None transiently
+    max_retries = 3
+    for attempt in range(max_retries):
+        resp = client.chat.completions.create(
+            model=cfg.model,
+            messages=messages,
+            max_tokens=effective_max_tokens,
+            temperature=cfg.temperature,
+            timeout=getattr(cfg, "timeout", None),
+        )
+        content = resp.choices[0].message.content
+        if content is not None:
+            return content
+        if attempt < max_retries - 1:
+            wait = 2 ** attempt
+            print(f"[ai_caller] Empty response, retrying in {wait}s...", file=sys.stderr)
+            time.sleep(wait)
+
+    return None

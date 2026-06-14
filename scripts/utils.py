@@ -16,7 +16,9 @@ import logging
 from pathlib import Path
 from typing import Optional
 
+import numpy as np
 import scanpy as sc
+import scipy.sparse as sp
 
 
 def safe_write(adata: sc.AnnData, target: str,
@@ -136,3 +138,45 @@ def resolve_config(config_path: Optional[str] = None):
     sys.modules["pipeline_config"] = mod
     spec.loader.exec_module(mod)
     return mod.CFG
+
+
+def validate_adata(adata, stage_name="", logger=None, fix_nan_inf=True) -> bool:
+    """检查 AnnData X 矩阵完整性，自动修复 NaN/Inf。
+
+    在后续步骤开始前调用，避免因前一步意外产生的 NaN/Inf
+    导致下游（PCA、UMAP 等）崩溃。
+
+    参数:
+        adata: AnnData 对象
+        stage_name: 当前步骤名称（仅用于日志标记）
+        logger: 日志记录器（None 则自动获取）
+        fix_nan_inf: 是否修复（替换为 0）
+
+    返回:
+        True — 发现并修复了问题
+        False — X 矩阵清洁
+    """
+    if logger is None:
+        logger = logging.getLogger(__name__)
+
+    X_data = adata.X.data if sp.issparse(adata.X) else adata.X
+    n_nan = int(np.isnan(X_data).sum())
+    n_inf = int(np.isinf(X_data).sum())
+    total = n_nan + n_inf
+
+    if total == 0:
+        logger.info("[%s] X matrix clean — no NaN/Inf values", stage_name or "validate")
+        return False
+
+    logger.warning(
+        "[%s] Found %d NaN and %d Inf values in X matrix — fixing",
+        stage_name or "validate", n_nan, n_inf,
+    )
+
+    if fix_nan_inf:
+        if sp.issparse(adata.X):
+            adata.X.data = np.nan_to_num(adata.X.data, nan=0, posinf=0, neginf=0)
+        else:
+            adata.X = np.nan_to_num(adata.X, nan=0, posinf=0, neginf=0)
+
+    return True

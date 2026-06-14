@@ -40,6 +40,8 @@ class AIConfig:
     api_key: str = ""
     max_tokens: int = 4096
     temperature: float = 0.1
+    reasoning_budget: int = 512          # 推理 token 预算 (o1 风格模型)
+    timeout: Optional[int] = None        # API 调用超时（秒）None=不超时
 
     # Task-level switches
     ai_qc_review: bool = False
@@ -100,11 +102,19 @@ class Config:
     meta_columns: Dict[str, str] = field(default_factory=dict)
 
     # ═══════════════════════════════════════════════════════════════════
+    #  数据集元信息
+    # ═══════════════════════════════════════════════════════════════════
+    tissue: str = "unknown"              # 组织类型（如 hypothalamus, retina）
+    species: str = "human"               # 物种（human, mouse, rat ...）
+
+    # ═══════════════════════════════════════════════════════════════════
     #  QC 阈值
     # ═══════════════════════════════════════════════════════════════════
     min_genes: int = 500                 # 细胞最少检测到的基因数
     max_genes: int = 7500                # 细胞最多检测到的基因数（排除可能双细胞）
     max_pct_mito: float = 20.0           # 线粒体基因百分比上限
+    mt_gene_pattern: str = "MT-"         # 线粒体基因前缀模式（如 MT-, mt-）
+    mt_gene_list: List[str] = field(default_factory=list)  # 自定义线粒体基因列表（优先于 pattern）
     min_genes_per_umi: float = 0.7       # 复杂度下限 log10(genes)/log10(UMI)
     min_cells_per_gene: int = 3          # 基因至少在多少个细胞中表达
 
@@ -130,6 +140,7 @@ class Config:
     n_top_genes: int = 4000              # HVG 数量
     hvg_flavor: str = "seurat_v3"        # 'seurat_v3' | 'seurat' | 'cell_ranger'
     hvg_batch_key: str = "sample"        # 批次感知 HVG 的分组列名
+    use_regress_out: bool = True         # 是否运行 regress_out（cell cycle / MT 效应）
 
     # ═══════════════════════════════════════════════════════════════════
     #  PCA
