@@ -41,6 +41,9 @@ AGENTS.md
 # Projects (user-specific analysis configs and outputs)
 projects/
 
+# Analysis suggestions
+suggestions/
+
 # Cache
 cache/
 *.h5ad
