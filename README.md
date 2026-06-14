@@ -1,6 +1,10 @@
 # 通用 scRNA-seq 分析管线
 
-基于 GSE169109（人胎下丘脑）和 GSE138002（人视网膜）两个真实 scRNA-seq 项目的代码审查，提取出的一套通用、可复用的单细胞 RNA 测序分析工作流。
+基于多个真实 scRNA-seq 项目的代码审查与实战经验，提取出的一套通用、可复用的单细胞 RNA 测序分析工作流。
+
+**起源**: 早期 scRNA-seq 项目的工程与分析方法学提炼。
+**锤炼**: 经过多种异质性数据集（TPM 非标准格式、scanpy 版本兼容性、非人物种、NaN 传播、大聚类数 AI 注释）的实地检验与修复。
+**现状**: 一套经过实战淬炼、覆盖加载→QC→降采样→聚类→注释→DE→轨迹→富集全流程的开放管线。
 
 **两种模式：**
 - **Pipeline 模式** — 全自动串行执行，适合批处理场景
@@ -12,6 +16,7 @@
 
 - **工程架构学 GSE138002**：集中配置（`config.py`）、CLI 主控（`run_pipeline.py`）、h5ad checkpoint 链、支持断点恢复
 - **分析方法学 GSE169109**：Scrublet 双细胞检测、raw counts 上选 HVG、子聚类、分支轨迹分析
+- **实战淬炼**：经多种异质性数据集验证，修复了 scanpy 版本兼容性、NaN 传播、LLM 空响应、非人物种 MT 检测等真实世界问题
 - **每步只做一件事**，每一步的 h5ad 都可独立加载验证
 - **不留技术债**：保留 `.raw` 全基因表达、不覆盖原始 PCA、同时保留校正前后嵌入
 - **AI Agent 原生支持**：预定义 5-Phase 交互式工作流，agent 自动驱动分析 + 用户协作决策
@@ -190,20 +195,23 @@ results/
 
 | 决策 | 说明 | 来源 |
 |------|------|------|
-| HVG 在 raw counts 上选择 | 归一化会扭曲方差估计，seurat_v3 需要原始 counts | GSE169109 |
-| 保留 `.raw` | 确保下游任意基因可做 DE/可视化，不因 HVG subset 丢失信息 | GSE169109 |
-| Scrublet 双细胞检测 | per sample 并行，当前 scRNA-seq 最佳实践 | GSE169109 |
-| 复杂度指标 | log10(genes)/log10(UMI) 排除空滴/破损细胞 | GSE169109 |
-| 多参数网格聚类 | 6 分辨率 x 3 k 值，交互式选择最佳参数 | GSE138002 |
-| 集中配置 + CLI | config.py + run_pipeline.py 避免硬编码，支持断点恢复 | GSE138002 |
-| 分支轨迹分析 | PAGA 后比较相邻谱系的差异基因 | GSE169109 |
-| 时间趋势 Spearman | 连续发育阶段的相关性分析，不限于离散比较 | GSE169109 |
-| 双模式注释 | AI LLM 注释 + Score_genes 回退，确保离线也能用 | 新增 |
-| 富集分析 | GSEApy (Enrichr API) + pre-ranked GSEA，双模式覆盖 | 新增 |
-| 富集回退 | 当 CSV 缺失时自动从 h5ad 计算标记基因再跑富集 | 新增 |
-| AI 交互工作流 | 5-Phase 交互式分析，agent 驱动 + 用户决策 | 新增 |
-| 降采样 (Step 01) | 可选层化/随机/分样本封顶降采样，防止大数据集 OOM | 新增 |
-| regress_out 在 HVG 子集 | 全基因 QR 分解 → 仅 HVG (~4000 基因) 回归，峰值内存降 ~7× | 性能优化 |
+| HVG 在 raw counts 上选择 | 归一化会扭曲方差估计，seurat_v3 需要原始 counts | 原始项目 |
+| 保留 `.raw` | 确保下游任意基因可做 DE/可视化，不因 HVG subset 丢失信息 | 原始项目 |
+| Scrublet 双细胞检测 | per sample 并行，当前 scRNA-seq 最佳实践 | 原始项目 |
+| 复杂度指标 | log10(genes)/log10(UMI) 排除空滴/破损细胞 | 原始项目 |
+| 多参数网格聚类 | 6 分辨率 x 3 k 值，交互式选择最佳参数 | 原始项目 |
+| 集中配置 + CLI | config.py + run_pipeline.py 避免硬编码，支持断点恢复 | 原始项目 |
+| 分支轨迹分析 | PAGA 后比较相邻谱系的差异基因 | 原始项目 |
+| 双模式 + 分块注释 | AI LLM 注释 + Score_genes 回退，大聚类数时分块提交防止超长 prompt | 多项目实战 |
+| 富集分析 | GSEApy (Enrichr API) + pre-ranked GSEA，双模式覆盖 | 多项目实战 |
+| 富集回退 | 当 CSV 缺失时自动从 h5ad 计算标记基因再跑富集 | 多项目实战 |
+| AI 交互工作流 | 5-Phase 交互式分析，agent 驱动 + 用户决策 | 通用 |
+| 降采样 (Step 01) | 可选层化/随机/分样本封顶降采样，防止大数据集 OOM | 多项目实战 |
+| NaN/Inf 数据完整性校验 | 各步骤间自动检测并修复 NaN/Inf，阻断传播 | 多项目实战 |
+| regress_out 在 HVG 子集 + 顺序调优 | 先 normalize 再 regress_out 避免 NaN，子集上运行降内存 ~7× | 多项目实战 |
+| 线粒体基因物种自定义 | `mt_gene_pattern` + `mt_gene_list` 双模式，支持非人/鼠物种 | 多项目实战 |
+| Legacy 10X 兼容 | 自动检测 2 列 genes.tsv.gz 并补全 feature_type 列 | 多项目实战 |
+| AI caller 重试 + reasoning 模型 | None 响应自动重试，支持 reasoning token 预算 | 多项目实战 |
 | 并行计算优化 | ThreadPool/ProcessPool/joblib 并行化 UMAP、DE、富集 API 调用 | 性能优化 |
 
 ---
