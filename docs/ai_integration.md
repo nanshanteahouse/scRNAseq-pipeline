@@ -21,7 +21,7 @@ scRNA-seq 管线集成了 AI 能力，用于三大场景：
 class AIConfig:
     enabled: bool = False
     api_base: str = ""               # 本地 vLLM / DeepSeek API / Ollama
-    model: str = "deepseek-chat"
+    model: str = "deepseek-v4-flash"   # deepseek-chat 将于 2026/07/24 弃用
     api_key: str = ""
     # 任务级开关
     ai_annotation: bool = True       # 细胞注释
@@ -35,11 +35,12 @@ class AIConfig:
 |------|--------|------|
 | `enabled` | `False` | 全局总开关。设为 `False` 时所有 AI 功能跳过，完全不调用 API |
 | `api_base` | `""` | API 端点地址。**这也是切换后端的主要手段** — 改这个字段即可切换 vLLM / DeepSeek / Ollama |
-| `model` | `"deepseek-chat"` | 模型名称。与 `api_base` 配合使用 |
-| `api_key` | `""` | API 密钥。空值时自动从环境变量 `LLM_API_KEY` 读取 |
+| `model` | `"deepseek-v4-flash"` | 模型名称（deepseek-chat 将于 2026/07/24 弃用）。与 `api_base` 配合使用 |
+| `api_key` | `""` | API 密钥。建议留空，通过 `.env` 文件或环境变量 `LLM_API_KEY` 提供（见 [安全存储](#api-key-安全存储)） |
 | `max_tokens` | `4096` | 最大输出 token 数 |
-| `temperature` | `0.1` | 采样温度。注释任务推荐低温（0.0–0.2）以保证一致性 |
-| `reasoning_budget` | `512` | 推理 token 预算，用于 o1 等推理模型 |
+| `temperature` | `0.1` | 采样温度（思考模式下不生效）。注释任务推荐低温（0.0–0.2） |
+| `thinking_enabled` | `True` | 是否启用 DeepSeek 思考模式 |
+| `reasoning_effort` | `"high"` | 推理强度：`"high"` 或 `"max"` |
 | `timeout` | `None` | API 调用超时（秒）。`None` 表示不设超时 |
 | `ai_annotation` | `True` | 是否启用 AI 细胞注释。关闭后回退到 `score_genes` 模式 |
 | `ai_subcluster` | `True` | 是否启用 AI 亚型注释 |
@@ -132,9 +133,9 @@ def ai_query(system_prompt: str, user_prompt: str, cfg) -> str:
 
 ### 关键特性
 
-- **Reasoning 支持**：当 `cfg.reasoning_budget > 0` 时，自动将其加到 `max_tokens` 上，适配 o1 等推理模型
+- **思考模式**：通过 `thinking_enabled` / `reasoning_effort` 控制 DeepSeek 思考模式。开启时不传 `temperature`（API 忽略但语义更清晰）
 - **自动重试**：某些 vLLM 部署会偶发返回 `content=None`，最多重试 3 次（指数退避：1s, 2s, 4s）
-- **密钥回退**：`api_key` 为空时自动使用 `LLM_API_KEY` 环境变量
+- **密钥回退**：`api_key` 为空时自动使用 `LLM_API_KEY` 环境变量。详见 [API Key 安全存储](#api-key-安全存储)
 
 ---
 
@@ -165,6 +166,42 @@ def ai_query(system_prompt: str, user_prompt: str, cfg) -> str:
 - `QC_REVIEW_PROMPT`：审查 QC 结果
 - `DEG_DESIGN_PROMPT`：建议差异表达对比设计
 - `INTERPRETATION_PROMPT`：解读差异表达或富集结果
+
+---
+
+## API Key 安全存储
+
+API 密钥应避免硬编码在配置文件中，防止意外提交到 git。
+
+### 推荐方式：`.env` 文件（本项目支持）
+
+1. 复制模板文件：
+   ```bash
+   cp .env.example .env
+   ```
+2. 编辑 `.env`，填入从 [DeepSeek Platform](https://platform.deepseek.com/api_keys) 获取的 key：
+   ```bash
+   LLM_API_KEY=sk-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+   ```
+3. 确保 `.env` 已被 `.gitignore` 排除（默认已添加）。
+4. `config.py` 中保持 `api_key = ""`（默认值），`ai_caller` 会自动读取 `LLM_API_KEY` 环境变量。
+
+### 备选方式：直接设置环境变量
+
+```bash
+# 临时（当前终端）
+export LLM_API_KEY=sk-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+
+# 持久化（写入 shell 配置）
+echo 'export LLM_API_KEY=sk-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx' >> ~/.bashrc
+source ~/.bashrc
+```
+
+### 优先级（高 → 低）
+
+1. `config.py` 中 `cfg.ai.api_key`（显式指定）
+2. 环境变量 `LLM_API_KEY`
+3. 兜底值 `"not-needed"`（仅用于本地测试 vLLM 等无需认证的后端）
 
 ---
 
