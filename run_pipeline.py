@@ -11,9 +11,9 @@ run_pipeline.py — 通用 scRNA-seq 管线主控
 
 用法:
     python run_pipeline.py                      # 全部顺序执行
-    python run_pipeline.py --step 3             # 只跑第 3 步
-    python run_pipeline.py --steps 3-6          # 跑 3~6 步
-    python run_pipeline.py --steps 1,3,5        # 跑第 1, 3, 5 步
+    python run_pipeline.py --step 3             # 只跑第 3 步 (03_integrate)
+    python run_pipeline.py --steps 0-2          # 跑步骤 0~2 (00_load, 01_doublet, 02_qc)
+    python run_pipeline.py --steps 1,3,5        # 跑步骤 1, 3, 5
     python run_pipeline.py --resume             # 从第一个未完成的步骤继续
     python run_pipeline.py --list               # 列出所有步骤
     python run_pipeline.py --config my_config.py # 使用自定义配置
@@ -110,9 +110,9 @@ def main():
     )
     group = parser.add_mutually_exclusive_group()
     group.add_argument("--steps", type=str,
-                       help="步骤范围 (如 3-6) 或列表 (如 1,3,5)")
+                       help="步骤范围 (如 0-2) 或列表 (如 1,3,5)")
     group.add_argument("--step", type=int,
-                       help="运行单个步骤（1-based）")
+                       help="运行单个步骤（0-based: --step 0 = 00_load, --step 3 = 03_integrate）")
     group.add_argument("--resume", action="store_true",
                        help="从第一个未完成的 checkpoint 继续")
     parser.add_argument("--list", action="store_true",
@@ -129,7 +129,7 @@ def main():
             ckpt = CHECKPOINT_FILES[STEPS.index((num, script, desc))]
             print(f"  [{num}] {desc}")
             print(f"        脚本: {script}  |  checkpoint: {ckpt}")
-        print(f"\n用法: python {os.path.basename(__file__)} --step N")
+        print(f"\n用法: python {os.path.basename(__file__)} --step 3   # 0-based，step 3 = 03_integrate")
         return
 
     # ── 加载配置 ───────────────────────────────────────────────────
@@ -159,17 +159,16 @@ def main():
         step_indices = list(range(start, len(STEPS)))
         print(f"[run] 从步骤 [{STEPS[start][0]}] 恢复执行")
     elif args.steps:
-        step_indices_raw = parse_step_range(args.steps)
-        step_indices = [i - 1 for i in step_indices_raw]
+        step_indices = parse_step_range(args.steps)
         for i in step_indices:
             if i < 0 or i >= len(STEPS):
-                print(f"[run] 错误: 无效步骤号 {i + 1}（有效范围: 1-{len(STEPS)}）")
+                print(f"[run] 错误: 无效步骤号 {i}（有效范围: 0-{len(STEPS) - 1}）")
                 sys.exit(1)
     elif args.step:
-        if args.step < 1 or args.step > len(STEPS):
-            print(f"[run] 错误: 步骤号 {args.step} 超出范围 (1-{len(STEPS)})")
+        if args.step < 0 or args.step >= len(STEPS):
+            print(f"[run] 错误: 步骤号 {args.step} 超出范围 (0-{len(STEPS) - 1})")
             sys.exit(1)
-        step_indices = [args.step - 1]
+        step_indices = [args.step]
     else:
         step_indices = list(range(len(STEPS)))
 

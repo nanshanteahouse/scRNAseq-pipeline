@@ -285,7 +285,7 @@ def plot_ora_bubble(
     top_per_cluster = (
         sig.sort_values('Adjusted P-value')
         .groupby('cluster')
-        .head(CFG.enrichment_n_top // max(1, sig['cluster'].nunique()))
+        .head(CFG.enrichment_n_top_genes // max(1, sig['cluster'].nunique()))
     )
     if len(top_per_cluster) < 3:
         log.info("  跳过气泡图 (%s): 显著通路不足", gs_name)
@@ -342,7 +342,7 @@ def plot_prerank_bubble(
     top_per_cluster = (
         sig.sort_values('FDR q-val')
         .groupby('cluster')
-        .head(CFG.enrichment_n_top // max(1, sig['cluster'].nunique()))
+        .head(CFG.enrichment_n_top_genes // max(1, sig['cluster'].nunique()))
     )
     if len(top_per_cluster) < 3:
         return

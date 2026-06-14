@@ -130,6 +130,11 @@ def ai_annotate(adata, CFG, logger):
     logger.info("计算 marker 基因 (Wilcoxon rank-sum)...")
     sc.tl.rank_genes_groups(adata, groupby='leiden', method='wilcoxon')
 
+    n_clusters = adata.obs['leiden'].nunique()
+    compact = n_clusters > 20
+    if compact:
+        logger.info("聚类数=%d (>20)，使用紧凑提示词模式", n_clusters)
+
     # ── b. 保存 marker 基因 CSV ───────────────────────────────────────
     marker_rows = []
     for cl in sorted(adata.obs['leiden'].unique(), key=lambda x: int(x)):
@@ -137,7 +142,7 @@ def ai_annotate(adata, CFG, logger):
         df['cluster'] = cl
         marker_rows.append(df)
     marker_df = pd.concat(marker_rows, ignore_index=True)
-    marker_csv = os.path.join(CFG.table_dir, 'marker_genes_per_group.csv')
+    marker_csv = os.path.join(CFG.table_dir, 'marker_genes_ai.csv')
     marker_df.to_csv(marker_csv, index=False)
     logger.info("Marker 基因已保存: %s", marker_csv)
 
@@ -148,7 +153,9 @@ def ai_annotate(adata, CFG, logger):
 
     # ── d. 构建提示词 ─────────────────────────────────────────────────
     from ai_prompts import build_annotation_prompt
-    sys_prompt, user_prompt = build_annotation_prompt(adata, tissue, species, precomputed_rank=True)
+    stages_present = sorted(adata.obs['stage'].unique().tolist()) if 'stage' in adata.obs else []
+    extra_context = f"Developmental stages: {stages_present}" if stages_present else ""
+    sys_prompt, user_prompt = build_annotation_prompt(adata, tissue, species, precomputed_rank=True, extra_context=extra_context, compact=compact)
 
     # ── e. 调用 LLM ───────────────────────────────────────────────────
     from ai_caller import ai_query
@@ -162,8 +169,8 @@ def ai_annotate(adata, CFG, logger):
     # ── f. 解析 JSON ──────────────────────────────────────────────────
     try:
         annotations = json.loads(response)
-    except json.JSONDecodeError:
-        logger.warning("LLM 响应不是有效 JSON — 回退到 score_genes 方法")
+    except (json.JSONDecodeError, TypeError) as e:
+        logger.warning("LLM 响应不是有效 JSON (%s) — 回退到 score_genes 方法", e)
         logger.warning("原始响应 (前 500 字符): %s", response[:500])
         return None
 

@@ -111,7 +111,6 @@ def main():
                 adata, n_neighbors=n,
                 n_pcs=CFG.n_pcs_use, use_rep=use_rep,
                 random_state=CFG.random_seed,
-                n_jobs=getattr(CFG, 'n_jobs', 1),
             )
         except Exception as e:
             log.error("邻居图计算失败 (n_neighbors=%d): %s", n, e)
@@ -164,11 +163,12 @@ def main():
 
         # ── 单参数组合 UMAP 图 (逐 resolution，数据已就绪) ──
         for res in resolutions_grid:
-            leiden_key = f'leiden_{n}_{res}'
             umap_key = f'umap_{n}_{res}'
-            if leiden_key not in adata.obs or umap_key not in adata.obsm:
+            leiden_key = f'leiden_{n}_{res}'
+            if umap_key not in adata.obsm or leiden_key not in adata.obs:
                 continue
-
+            saved = adata.obsm.get('X_umap')
+            adata.obsm['X_umap'] = adata.obsm[umap_key].copy()
             try:
                 safe_plot(sc.pl.umap, adata, color=leiden_key, show=False,
                           title=f'UMAP (n_neighbors={n}, resolution={res})')
@@ -180,6 +180,9 @@ def main():
                 log.info("    图已保存: umap_grid_n%d_r%.1f.png", n, res)
             except Exception as e:
                 log.warning("    单参数 UMAP 图保存失败: %s", e)
+            finally:
+                if saved is not None:
+                    adata.obsm['X_umap'] = saved
 
     # ── 汇总 CSV ──
     df_summary = pd.DataFrame(results_summary)
@@ -190,6 +193,10 @@ def main():
         log.info("\n%s", df_summary.to_string())
     except Exception as e:
         log.warning("汇总 CSV 保存失败: %s", e)
+
+    if not results_summary:
+        log.critical("所有邻居图/聚类计算均失败 — 无任何参数组合成功")
+        sys.exit(1)
 
     # ── 网格汇总图: 所有参数组合对比 ──
     n_n = len(n_neighbors_grid)

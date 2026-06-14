@@ -55,7 +55,9 @@ Return ONLY a valid JSON object mapping each cluster ID to its annotation. Inclu
 
 
 def build_annotation_prompt(adata, tissue: str, species: str,
-                            precomputed_rank: bool = False):
+                            precomputed_rank: bool = False,
+                            extra_context: str = "",
+                            compact: bool = False):
     """
     构建聚类注释的完整提示词对。
 
@@ -69,6 +71,9 @@ def build_annotation_prompt(adata, tissue: str, species: str,
         species: 物种名称（如 "human", "mouse"）
         precomputed_rank: 若为 True，跳过 rank_genes_groups 计算，
                           使用 adata 中已有的结果（默认 False）
+        extra_context: 额外上下文信息（如发育阶段列表）追加到用户提示词尾部
+        compact: 若为 True，每聚类仅展示 top 10 而非 top 20 marker 基因，
+                 用于减少 tokens（默认 False）
 
     返回:
         (system_prompt, user_prompt) 二元组，可直接传入 ai_query()
@@ -77,13 +82,14 @@ def build_annotation_prompt(adata, tissue: str, species: str,
     if not precomputed_rank:
         sc.tl.rank_genes_groups(adata, groupby="leiden", method="wilcoxon")
 
-    # ── 提取每聚类 top 20 marker ──────────────────────────────────────
+    # ── 提取每聚类 marker 基因 ───────────────────────────────────────
+    n_top = 10 if compact else 20
     clusters = sorted(adata.obs["leiden"].unique(),
                       key=lambda x: int(x))
     cluster_markers: dict = {}
     for cl in clusters:
         df = sc.get.rank_genes_groups_df(adata, group=str(cl))
-        top_genes = df.head(20)["names"].tolist()
+        top_genes = df.head(n_top)["names"].tolist()
         cluster_markers[cl] = top_genes
 
     # ── 组装提示词 ────────────────────────────────────────────────────
@@ -92,6 +98,8 @@ def build_annotation_prompt(adata, tissue: str, species: str,
         species=species,
         cluster_markers_json=json.dumps(cluster_markers, indent=2),
     )
+    if extra_context:
+        user_prompt += f"\n\n{extra_context}"
 
     return ANNOTATION_SYSTEM_PROMPT, user_prompt
 

@@ -35,6 +35,18 @@ def main():
 
     # ── 3 种加载方式 ──────────────────────────────────────────────
     if CFG.data_format == "10X_mtx":
+        # Legacy 2-column genes.tsv.gz → 3-column features.tsv.gz
+        genes_path = os.path.join(CFG.mtx_dir, CFG.mtx_prefix + 'genes.tsv.gz')
+        features_path = os.path.join(CFG.mtx_dir, CFG.mtx_prefix + 'features.tsv.gz')
+        if not os.path.exists(features_path) and os.path.exists(genes_path):
+            log.info("检测到旧版 2-column genes.tsv.gz — 转换为 features.tsv.gz...")
+            import gzip
+            with gzip.open(genes_path, 'rt') as f_in:
+                with gzip.open(features_path, 'wt') as f_out:
+                    for line in f_in:
+                        f_out.write(line.rstrip('\n') + '\tGene Expression\n')
+            log.info("  features.tsv.gz 已创建")
+
         log.info("从 MTX 加载 (前缀='%s') ...", CFG.mtx_prefix)
         adata = sc.read_10x_mtx(
             CFG.mtx_dir,
@@ -72,34 +84,55 @@ def main():
             adata.var.drop(columns=['gene_ids'], inplace=True)
 
     elif CFG.data_format == "csv_matrix":
-        log.info("从 CSV 矩阵加载: %s", CFG.matrix_file)
-        mtx = mmread(CFG.matrix_file)
-        log.info("矩阵形状: %s, nnz=%d", mtx.shape, mtx.nnz)
-        mtx.data = mtx.data.astype(np.float32)
-        mtx = mtx.T.tocsr()
+        matrix_ext = os.path.splitext(CFG.matrix_file)[1].lower()
+        if matrix_ext in ('.csv', '.gz'):
+            # True CSV format: gene × cell, first column = gene names
+            log.info("从 CSV 加载: %s", CFG.matrix_file)
+            df = pd.read_csv(CFG.matrix_file, index_col=0)
+            log.info("CSV 形状: %s", df.shape)
+            # Transpose to AnnData convention: cells × genes
+            adata = sc.AnnData(X=df.values.T.astype(np.float32))
+            adata.var_names = df.index.astype(str)
+            adata.obs_names = df.columns.astype(str)
+            # Load metadata if barcodes/features files provided
+            if CFG.barcodes_file and os.path.exists(CFG.barcodes_file):
+                metadata = pd.read_csv(CFG.barcodes_file, index_col=0)
+                adata.obs = adata.obs.join(metadata, how='left')
+            if CFG.features_file and os.path.exists(CFG.features_file):
+                genes = pd.read_csv(CFG.features_file)
+                if len(genes) == adata.n_vars:
+                    adata.var = genes
+        else:
+            # Original MTX path (mmread)
+            log.info("从 MTX 矩阵加载: %s", CFG.matrix_file)
+            mtx = mmread(CFG.matrix_file)
+            log.info("矩阵形状: %s, nnz=%d", mtx.shape, mtx.nnz)
+            mtx.data = mtx.data.astype(np.float32)
+            mtx = mtx.T.tocsr()
 
-        genes = pd.read_csv(CFG.features_file)
-        gene_names = genes.iloc[:, 0].values.astype(str)
-        gene_names = pd.Index(gene_names)
-        if gene_names.duplicated().any():
-            log.warning("发现重复基因名，添加后缀去重")
-            gene_names = gene_names.to_series().pipe(
-                lambda s: s.groupby(s).cumcount().astype(str).radd(
-                    s.where(~s.duplicated(keep=False), s + '_')
+            genes = pd.read_csv(CFG.features_file)
+            gene_names = genes.iloc[:, 0].values.astype(str)
+            gene_names = pd.Index(gene_names)
+            if gene_names.duplicated().any():
+                log.warning("发现重复基因名，添加后缀去重")
+                gene_names = gene_names.to_series().pipe(
+                    lambda s: s.groupby(s).cumcount().astype(str).radd(
+                        s.where(~s.duplicated(keep=False), s + '_')
+                    )
                 )
-            )
-            gene_names = gene_names.values
+                gene_names = gene_names.values
 
-        metadata = pd.read_csv(CFG.barcodes_file, index_col=0)
-        if CFG.meta_columns:
-            rename_map = {}
-            for target_col, source_col in CFG.meta_columns.items():
-                if source_col in metadata.columns:
-                    rename_map[source_col] = target_col
-            if rename_map:
-                metadata.rename(columns=rename_map, inplace=True)
+            metadata = pd.read_csv(CFG.barcodes_file, index_col=0)
+            if CFG.meta_columns:
+                rename_map = {}
+                for target_col, source_col in CFG.meta_columns.items():
+                    if source_col in metadata.columns:
+                        rename_map[source_col] = target_col
+                if rename_map:
+                    metadata.rename(columns=rename_map, inplace=True)
 
-        adata = sc.AnnData(X=mtx, obs=metadata, var=pd.DataFrame(index=gene_names))
+            adata = sc.AnnData(X=mtx, obs=metadata, var=pd.DataFrame(index=gene_names))
+
         log.info("加载完成: %d 细胞 × %d 基因", adata.n_obs, adata.n_vars)
 
     elif CFG.data_format == "h5ad":

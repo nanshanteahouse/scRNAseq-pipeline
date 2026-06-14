@@ -33,22 +33,34 @@ def main():
     CFG = resolve_config(args.config)
     log = setup_logger("03_integrate", os.path.join(CFG.log_dir, "03_integrate.log"))
     log.info("Step 03: 归一化 + HVG 选择 + PCA + Harmony（整合版）")
+    from utils import validate_adata
 
     # ── 读取 ──
     adata = sc.read(CFG.qc_h5ad)
     log.info("加载: %d 细胞 × %d 基因", adata.n_obs, adata.n_vars)
 
-    # ── HVG ──
-    log.info("选择 top %d HVGs (flavor=%s, batch_key=%s)...",
-             CFG.n_top_genes, CFG.hvg_flavor, CFG.hvg_batch_key)
+    # ── HVG（自动降级：CFG.hvg_flavor → seurat_v3 → cell_ranger → seurat）──
     batch_key = CFG.hvg_batch_key if CFG.hvg_batch_key in adata.obs else None
-    sc.pp.highly_variable_genes(
-        adata,
-        n_top_genes=CFG.n_top_genes,
-        flavor=CFG.hvg_flavor,
-        batch_key=batch_key,
-        inplace=True,
-    )
+    flavors_to_try = [CFG.hvg_flavor, 'seurat_v3', 'cell_ranger', 'seurat']
+    for flavor in flavors_to_try:
+        try:
+            log.info("选择 top %d HVGs (flavor=%s, batch_key=%s)...",
+                     CFG.n_top_genes, flavor, batch_key)
+            sc.pp.highly_variable_genes(
+                adata,
+                n_top_genes=CFG.n_top_genes,
+                flavor=flavor,
+                batch_key=batch_key,
+                inplace=True,
+            )
+            log.info("HVG flavor=%s 成功", flavor)
+            break
+        except (ValueError, RuntimeWarning, TypeError):
+            log.warning("HVG flavor=%s 失败，尝试下一个", flavor)
+            continue
+    else:
+        log.critical("所有 HVG flavor 均失败")
+        sys.exit(1)
     n_hvg = adata.var['highly_variable'].sum()
     log.info("HVG 数量: %d", n_hvg)
 
@@ -63,12 +75,15 @@ def main():
     # ── Regress out 技术变异 (HVG 子集) ──
     # 在 HVG 子集上回归 total_counts 和 pct_counts_mt，移除非特异技术噪音
     # 某些数据集可能没有 pct_counts_mt，用 try/except 兜底
-    try:
-        log.info("回归技术协变量: total_counts, pct_counts_mt ...")
-        sc.pp.regress_out(adata, ['total_counts', 'pct_counts_mt'])
-        log.info("  regress_out 完成")
-    except Exception as e:
-        log.warning("regress_out 失败（跳过）: %s", e)
+    if CFG.use_regress_out:
+        try:
+            log.info("回归技术协变量: total_counts, pct_counts_mt ...")
+            sc.pp.regress_out(adata, ['total_counts', 'pct_counts_mt'])
+            log.info("  regress_out 完成")
+        except Exception as e:
+            log.warning("regress_out 失败（跳过）: %s", e)
+    else:
+        log.info("use_regress_out=False — 跳过 regress_out（适用于 TPM 等已归一化数据）")
 
     # ── regress_out 后降回 float32（regress_out 会产生 float64 中间体） ──
     if getattr(CFG, 'use_float32', False):
@@ -78,16 +93,29 @@ def main():
             adata.X = adata.X.astype('float32', copy=False)
         log.info("  X 精度已恢复为 float32")
 
+    # ── 数据完整性检查：regress_out 后 ──
+    if CFG.use_regress_out:
+        validate_adata(adata, stage_name="regress_out", logger=log)
+
     # ── 归一化 (HVG 子集) ──
     log.info("归一化 (target_sum=%.0f) + log1p...", CFG.normalize_target_sum)
     sc.pp.normalize_total(adata, target_sum=CFG.normalize_target_sum)
     sc.pp.log1p(adata)
+
+    # ── 数据完整性检查：归一化后 ──
+    validate_adata(adata, stage_name="normalize+log1p", logger=log)
 
     # ── 归一化全基因副本并保留到 .raw ──
     sc.pp.normalize_total(adata_full, target_sum=CFG.normalize_target_sum)
     sc.pp.log1p(adata_full)
     adata.raw = adata_full
     log.info(".raw 已保存 (全基因: %d vars)", adata_full.n_vars)
+
+    # ── 数据完整性检查：PCA 前 ──
+    has_issues = validate_adata(adata, stage_name="before_PCA", logger=log)
+    if has_issues:
+        log.critical("PCA 前发现数据完整性问题，终止！")
+        sys.exit(1)
 
     # ── PCA ──
     log.info("PCA (%d components)...", CFG.n_pcs_full)

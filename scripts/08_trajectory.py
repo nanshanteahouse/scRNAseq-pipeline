@@ -108,7 +108,14 @@ def compute_dpt(adata, root_mask, CFG, log):
 
     log.info("扩散伪时间...")
     adata.uns['iroot'] = np.flatnonzero(root_mask)[0]
-    sc.tl.dpt(adata, n_branchings=CFG.n_branchings)
+    for nb in [CFG.n_branchings, 1, 0]:
+        try:
+            sc.tl.dpt(adata, n_branchings=nb)
+            log.info("  DPT 完成 (n_branchings=%d)", nb)
+            break
+        except ValueError:
+            log.warning("DPT n_branchings=%d 失败，尝试 n_branchings=%d", nb, 1 if nb > 1 else 0)
+            continue
     log.info("  DPT 范围: %.3f – %.3f",
              adata.obs['dpt_pseudotime'].min(),
              adata.obs['dpt_pseudotime'].max())
@@ -124,12 +131,17 @@ def branch_analysis(adata, CFG, log):
         log.info("无 cell_type 注释，跳过分支分析。")
         return
 
-    # 默认分支对: 用户可覆盖
-    branches = [
-        ('NE', 'NP'), ('NP', 'Neuron'),
-        ('NP', 'Astrocyte'), ('NP', 'OPC'),
-        ('OPC', 'OL'),
-    ]
+    if hasattr(CFG, 'trajectory_branches') and CFG.trajectory_branches:
+        branches = CFG.trajectory_branches
+    else:
+        # Auto-detect: use cell type pairs from PAGA graph
+        if 'cell_type' in adata.obs:
+            avail_types = list(adata.obs['cell_type'].cat.categories)
+            branches = []
+            for i in range(len(avail_types) - 1):
+                branches.append((avail_types[i], avail_types[i + 1]))
+        else:
+            branches = []
     # 仅保留数据中存在的分支
     avail_types = set(adata.obs['cell_type'].cat.categories)
     branches = [(p, c) for p, c in branches if p in avail_types and c in avail_types]
@@ -202,8 +214,9 @@ def main():
     log = setup_logger("08_trajectory", os.path.join(CFG.log_dir, "08_trajectory.log"))
     log.info("Step 08: 轨迹分析")
 
-    adata = sc.read(CFG.cluster_h5ad)
-    log.info("加载: %s — %d 细胞", CFG.cluster_h5ad, adata.n_obs)
+    input_path = CFG.annotated_h5ad if os.path.exists(CFG.annotated_h5ad) else CFG.cluster_h5ad
+    adata = sc.read(input_path)
+    log.info("加载: %s — %d 细胞", input_path, adata.n_obs)
 
     # 设置图输出目录（必须在 plot 调用之前，否则 scanpy save= 默认写到 ./figures/）
     sc.settings.figdir = CFG.figure_dir

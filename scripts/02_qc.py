@@ -17,9 +17,12 @@ import numpy as np
 import pandas as pd
 import scanpy as sc
 
-def compute_qc_metrics(adata, log):
+def compute_qc_metrics(adata, cfg, log):
     log.info("计算 QC 指标...")
-    adata.var['mt'] = adata.var_names.str.startswith('MT-')
+    mt_mask = adata.var_names.str.startswith(cfg.mt_gene_pattern)
+    if cfg.mt_gene_list:
+        mt_mask = mt_mask | adata.var_names.isin(cfg.mt_gene_list)
+    adata.var['mt'] = mt_mask
     adata.var['ribo'] = adata.var_names.str.startswith(('RPS', 'RPL'))
     sc.pp.calculate_qc_metrics(
         adata, qc_vars=['mt', 'ribo'],
@@ -82,7 +85,7 @@ def main():
     log.info("加载: %s — %d 细胞 × %d 基因",
              input_path, adata.n_obs, adata.n_vars)
 
-    compute_qc_metrics(adata, log)
+    compute_qc_metrics(adata, CFG, log)
     adata = filter_cells(adata, CFG, log)
     sc.pp.filter_genes(adata, min_cells=CFG.min_cells_per_gene)
     log.info("基因过滤后: %d 基因", adata.n_vars)
