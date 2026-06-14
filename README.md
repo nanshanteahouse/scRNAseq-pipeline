@@ -23,16 +23,17 @@
 | 步骤 | 脚本 | 输入 | 输出 | 功能 |
 |------|------|------|------|------|
 | 00 | `00_load.py` | 原始数据 (MTX/CSV/h5ad) | `00_raw.h5ad` | 加载三种格式 + 样本/阶段映射 |
-| 01 | `01_doublet.py` | `00_raw.h5ad` | `01_doublet.h5ad` | Scrublet 双细胞检测 (per sample) |
-| 02 | `02_qc.py` | `01_doublet.h5ad` | `02_qc.h5ad` | QC 过滤 (先去 doublet，再按 MT%/基因数/复杂度过滤) |
-| 03 | `03_integrate.py` | `02_qc.h5ad` | `03_integrated.h5ad` | 归一化 + HVG + PCA + Harmony 批次校正 |
-| 04 | `04_cluster_umap.py` | `03_integrated.h5ad` | `04_clustered.h5ad` | 多参数 UMAP + 多分辨率 Leiden 聚类 |
-| 05 | `05_annotate_major.py` | `04_clustered.h5ad` | `05_annotated.h5ad` | AI/Score_genes 双模式 major type 注释 |
-| 06 | `06_subcluster.py` | `05_annotated.h5ad` | (同文件更新) | 交互式亚型分析 (需指定 cell type) |
-| 07 | `07_markers_de.py` | `05_annotated.h5ad` | CSV + 图片 | 标记基因 + 配对DE + 时间趋势 |
-| 08 | `08_trajectory.py` | `04_clustered.h5ad` | `05_final.h5ad` | PAGA + DPT + 分支分析 |
-| 09 | `09_enrichment.py` | `marker_genes_per_group.csv` | `enrichment_*.csv` + 图片 | GO/KEGG 通路富集 (GSEApy) |
-| 10 | `06_exploratory.py` | `05_annotated.h5ad` | CSV + 图片 | 组成分析 + QC + 标记探索 |
+| 01 | `downsample.py` | `00_raw.h5ad` | (覆写 `00_raw.h5ad`) | 降采样 (可选，按配置跳过) |
+| 02 | `01_doublet.py` | `00_raw.h5ad` | `01_doublet.h5ad` | Scrublet 双细胞检测 (per sample) |
+| 03 | `02_qc.py` | `01_doublet.h5ad` | `02_qc.h5ad` | QC 过滤 (先去 doublet，再按 MT%/基因数/复杂度过滤) |
+| 04 | `03_integrate.py` | `02_qc.h5ad` | `03_integrated.h5ad` | 归一化 + HVG + PCA + Harmony 批次校正 |
+| 05 | `04_cluster_umap.py` | `03_integrated.h5ad` | `04_clustered.h5ad` | 多参数 UMAP + 多分辨率 Leiden 聚类 |
+| 06 | `05_annotate_major.py` | `04_clustered.h5ad` | `05_annotated.h5ad` | AI/Score_genes 双模式 major type 注释 |
+| 07 | `06_subcluster.py` | `05_annotated.h5ad` | (同文件更新) | 交互式亚型分析 (需指定 cell type) |
+| 08 | `07_markers_de.py` | `05_annotated.h5ad` | CSV + 图片 | 标记基因 + 配对DE + 时间趋势 |
+| 09 | `08_trajectory.py` | `04_clustered.h5ad` | `05_final.h5ad` | PAGA + DPT + 分支分析 |
+| 10 | `09_enrichment.py` | `marker_genes_per_group.csv` | `enrichment_*.csv` + 图片 | GO/KEGG 通路富集 (GSEApy) |
+| 11 | `06_exploratory.py` | `05_annotated.h5ad` | CSV + 图片 | 组成分析 + QC + 标记探索 |
 
 ---
 
@@ -46,8 +47,8 @@
 Phase 0: 初始化（确认数据路径/格式/组织/实验设计）
     │
     ▼
-Phase 1: 数据预处理（自动）
-  doublet → QC → integrate
+Phase 1: 数据预处理（自动，交互式降采样）
+  downsample (可选) → doublet → QC → integrate
     │
     ▼
   STOP 1 — QC 审查：展示过滤统计 → 用户决策阈值
@@ -133,11 +134,11 @@ python run_pipeline.py --config config_myproject.py
 # 从断点恢复
 python run_pipeline.py --resume --config config_myproject.py
 
-# 只跑第 3 步
-python run_pipeline.py --step 3 --config config_myproject.py
+# 只跑第 4 步 (step 4 = 04_integrate.py, 原 step 3)
+python run_pipeline.py --step 4 --config config_myproject.py
 
-# 跑 3-6 步
-python run_pipeline.py --steps 3-6 --config config_myproject.py
+# 跑 4-7 步
+python run_pipeline.py --steps 4-7 --config config_myproject.py
 
 # 列出所有步骤
 python run_pipeline.py --list --config config_myproject.py
@@ -201,6 +202,7 @@ results/
 | 富集分析 | GSEApy (Enrichr API) + pre-ranked GSEA，双模式覆盖 | 新增 |
 | 富集回退 | 当 CSV 缺失时自动从 h5ad 计算标记基因再跑富集 | 新增 |
 | AI 交互工作流 | 5-Phase 交互式分析，agent 驱动 + 用户决策 | 新增 |
+| 降采样 (Step 01) | 可选层化/随机/分样本封顶降采样，防止大数据集 OOM | 新增 |
 | regress_out 在 HVG 子集 | 全基因 QR 分解 → 仅 HVG (~4000 基因) 回归，峰值内存降 ~7× | 性能优化 |
 | 并行计算优化 | ThreadPool/ProcessPool/joblib 并行化 UMAP、DE、富集 API 调用 | 性能优化 |
 
@@ -252,7 +254,8 @@ class AIConfig:
 3. 配置 `sample_map`（如果是 10X 聚合数据）或 `meta_columns`（如果是 CSV 格式）
 4. 配置 `marker_dict`（目标组织的已知细胞类型标记基因）
 5. 调整 QC 阈值（建议先用默认值跑一遍看 QC 指标分布再微调）
-6. 运行 `python run_pipeline.py --config config_newdata.py`
+6. 大数据集（>50K 细胞）：设置 `CFG.downsample_target` 激活降采样；小数据集跳过（默认）
+7. 运行 `python run_pipeline.py --config config_newdata.py`
 
 ---
 
@@ -268,13 +271,14 @@ class AIConfig:
 ├── .gitignore
 ├── scripts/
 │   ├── 00_load.py
+│   ├── downsample.py        # step 01：降采样（可选）
 │   ├── 01_doublet.py
-│   ├── 02_qc.py             # step 02：QC 过滤 (doublet 已去除)
+│   ├── 02_qc.py             # step 03：QC 过滤 (doublet 已去除)
 │   ├── 03_integrate.py
 │   ├── 04_cluster_umap.py
 │   ├── 05_annotate_major.py # AI + Score_genes 双模式
 │   ├── 06_subcluster.py
-│   ├── 06_exploratory.py    # step 10（可选）
+│   ├── 06_exploratory.py    # step 11（可选）
 │   ├── 07_markers_de.py
 │   ├── 08_trajectory.py
 │   ├── 09_enrichment.py
