@@ -221,6 +221,15 @@ class Config:
     enrichment_permutations: int = 1000    # GSEA 置换次数
 
     # ═══════════════════════════════════════════════════════════════════
+    #  降采样 (Step 01)
+    # ═══════════════════════════════════════════════════════════════════
+    # 设置 target 后激活降采样步骤；不设置则 Step 01 自动跳过
+    downsample_target: Optional[int] = None    # 目标总细胞数（None=跳过）
+    downsample_strategy: str = "stratified"    # random | stratified | max_per_sample
+    downsample_max_per_sample: Optional[int] = None  # max_per_sample 策略上限
+    downsample_random_seed: int = 42
+
+    # ═══════════════════════════════════════════════════════════════════
     #  执行环境
     # ═══════════════════════════════════════════════════════════════════
     n_jobs: int = 24

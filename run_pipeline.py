@@ -19,13 +19,13 @@ run_pipeline.py — 通用 scRNA-seq 管线主控
     python run_pipeline.py --config my_config.py # 使用自定义配置
 
 checkpoint 依赖链:
-    00_raw.h5ad    ← 00_load.py
-    01_doublet.h5ad ← 01_doublet.py
-    02_qc.h5ad     ← 02_qc.py (步骤 02, doublet 已去除)
-    03_integrated.h5ad ← 03_integrate.py
-    04_clustered.h5ad  ← 04_cluster_umap.py (步骤 08 读取)
-    05_annotated.h5ad  ← 05_annotate_major.py (步骤 06,07,10 读取)
-    marker_genes_per_group.csv ← 07_markers_de.py (步骤 09 读取)
+    00_raw.h5ad    ← 00_load.py / 01_downsample.py (可选覆写)
+    01_doublet.h5ad ← 02_doublet.py (原 step 01)
+    02_qc.h5ad     ← 03_qc.py (原 step 02)
+    03_integrated.h5ad ← 04_integrate.py
+    04_clustered.h5ad  ← 05_cluster_umap.py (步骤 09 读取)
+    05_annotated.h5ad  ← 06_annotate_major.py (步骤 07,08,11 读取)
+    marker_genes_per_group.csv ← 08_markers_de.py (步骤 10 读取)
 """
 
 import sys
@@ -38,36 +38,38 @@ import argparse
 # 每步: (序号, 脚本名, 描述)
 STEPS = [
     ("00", "00_load.py",                "加载原始数据 → 00_raw.h5ad"),
-    ("01", "01_doublet.py",             "Scrublet 双细胞检测 (per sample) → 01_doublet.h5ad"),
-    ("02", "02_qc.py",                  "QC 过滤 (doublet 已去除) → 02_qc.h5ad"),
-    ("03", "03_integrate.py",           "归一化 + HVG + PCA + Harmony → 03_integrated.h5ad"),
-    ("04", "04_cluster_umap.py",        "多参数 UMAP + 多分辨率 Leiden"),
-    ("05", "05_annotate_major.py",      "AI 辅助 major cell type 注释 (双模式)"),
-    ("06", "06_subcluster.py",          "交互式亚型分析 (需 --cell-type 参数)"),
-    ("07", "07_markers_de.py",          "差异表达分析 (多层级)"),
-    ("08", "08_trajectory.py",          "PAGA + DPT 轨迹分析"),
-    ("09", "09_enrichment.py",          "GO/KEGG 富集 + AI 解读"),
-    ("10", "06_exploratory.py",         "探索性分析 (组成/QC/marker探索)"),
+    ("01", "downsample.py",             "降采样 (可选, config: downsample_target)"),
+    ("02", "01_doublet.py",             "Scrublet 双细胞检测 (per sample) → 01_doublet.h5ad"),
+    ("03", "02_qc.py",                  "QC 过滤 (doublet 已去除) → 02_qc.h5ad"),
+    ("04", "03_integrate.py",           "归一化 + HVG + PCA + Harmony → 03_integrated.h5ad"),
+    ("05", "04_cluster_umap.py",        "多参数 UMAP + 多分辨率 Leiden"),
+    ("06", "05_annotate_major.py",      "AI 辅助 major cell type 注释 (双模式)"),
+    ("07", "06_subcluster.py",          "交互式亚型分析 (需 --cell-type 参数)"),
+    ("08", "07_markers_de.py",          "差异表达分析 (多层级)"),
+    ("09", "08_trajectory.py",          "PAGA + DPT 轨迹分析"),
+    ("10", "09_enrichment.py",          "GO/KEGG 富集 + AI 解读"),
+    ("11", "06_exploratory.py",         "探索性分析 (组成/QC/marker探索)"),
 ]
 
 # 每步对应的 checkpoint 文件名
 # 步骤 06-10 读取已生成的上游 checkpoint，不写新的 checkpoint
 CHECKPOINT_FILES = [
-    "00_raw.h5ad",          # step 00
-    "01_doublet.h5ad",      # step 01
-    "02_qc.h5ad",           # step 02
-    "03_integrated.h5ad",   # step 03
-    "04_clustered.h5ad",    # step 04
-    "05_annotated.h5ad",    # step 05
-    "05_annotated.h5ad",    # step 06 (reads 05_annotated)
-    "05_annotated.h5ad",    # step 07 (reads 05_annotated)
-    "04_clustered.h5ad",    # step 08 (reads 04_clustered)
-    "marker_genes_per_group.csv",  # step 09 (reads CSV from tables/)
-    "05_annotated.h5ad",    # step 10 (reads 05_annotated)
+    "00_raw.h5ad",               # step 00
+    "00_raw.h5ad",               # step 01 (downsample overwrites)
+    "01_doublet.h5ad",           # step 02
+    "02_qc.h5ad",                # step 03
+    "03_integrated.h5ad",        # step 04
+    "04_clustered.h5ad",         # step 05
+    "05_annotated.h5ad",         # step 06
+    "05_annotated.h5ad",         # step 07 (reads 05_annotated)
+    "05_annotated.h5ad",         # step 08 (reads 05_annotated)
+    "04_clustered.h5ad",         # step 09 (reads 04_clustered)
+    "marker_genes_per_group.csv",# step 10 (reads CSV from tables/)
+    "05_annotated.h5ad",         # step 11 (reads 05_annotated)
 ]
 
 # 哪些步骤会输出新的 checkpoint（用于 --resume 判断）
-STEPS_WRITE_CHECKPOINT = {0, 1, 2, 3, 4, 5}
+STEPS_WRITE_CHECKPOINT = {0, 1, 2, 3, 4, 5, 6}
 
 
 def find_first_incomplete(h5ad_dir: str) -> int:
@@ -164,7 +166,7 @@ def main():
             if i < 0 or i >= len(STEPS):
                 print(f"[run] 错误: 无效步骤号 {i}（有效范围: 0-{len(STEPS) - 1}）")
                 sys.exit(1)
-    elif args.step:
+    elif args.step is not None:
         if args.step < 0 or args.step >= len(STEPS):
             print(f"[run] 错误: 步骤号 {args.step} 超出范围 (0-{len(STEPS) - 1})")
             sys.exit(1)
