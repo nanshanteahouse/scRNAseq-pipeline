@@ -150,6 +150,22 @@ cp config.py config_project.py
 python run_pipeline.py --step 0 --config config_project.py
 ```
 
+### 资源配置
+
+加载验证通过后，根据数据集特征配置计算资源：
+
+- **CPU 核数**：询问用户可用核心数（默认全部使用）。小数据集（<50K 细胞）用默认即可，大数据集建议限制并行数以控制内存。
+- **tmux watchdog**：创建后台 tmux 会话（`scRNAseq-{project}`），所有 `run_pipeline.py --step N` 命令在 tmux 中执行，日志输出同时写入 `projects/GSE*/run.log`。
+
+#### 重启恢复
+
+如果重新启动时检测到已有运行日志但流程未跑完：
+
+1. **询问用户**：是否发生过 OOM（内存溢出）？
+   → 如果是 → **询问是否需要降采样处理**（见 Phase 1 Step 01 降采样交互）
+   → 如果否 → 使用 `--resume` 从断点继续
+2. 根据 tmux 中的执行情况和日志，及时继续下一步骤
+
 ---
 
 ## Phase 1：数据预处理（自动跑，交互式降采样）

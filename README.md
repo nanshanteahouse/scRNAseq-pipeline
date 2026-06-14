@@ -49,7 +49,7 @@
 工作流全景：
 
 ```
-Phase 0: 初始化（确认数据路径/格式/组织/实验设计）
+Phase 0: 初始化（数据配置 + 资源规划：CPU 核数/OOM 恢复/降采样策略）
     │
     ▼
 Phase 1: 数据预处理（自动，交互式降采样）
@@ -264,6 +264,8 @@ class AIConfig:
 5. 调整 QC 阈值（建议先用默认值跑一遍看 QC 指标分布再微调）
 6. 大数据集（>50K 细胞）：设置 `CFG.downsample_target` 激活降采样；小数据集跳过（默认）
 7. 运行 `python run_pipeline.py --config config_newdata.py`
+
+> Interactive 模式下，CPU 核数、降采样、OOM 恢复等资源决策由 Agent 在 Phase 0 自动引导用户完成，无需手动配置。
 
 ---
 
