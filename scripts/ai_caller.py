@@ -31,7 +31,7 @@ def ai_query(system_prompt: str, user_prompt: str, cfg) -> str:
     使用 OpenAI SDK 构造聊天补全请求。cfg 是任意提供以下属性的对象:
       - api_base (str):      API 端点 URL
       - model (str):         模型名称 (如 'gpt-4o', 'claude-3-opus-20240229')
-      - api_key (str):       API 密钥（可空，由 SDK 自动回退环境变量）
+      - api_key (str):       API 密钥（留空则从 LLM_API_KEY 环境变量读取，参见项目根目录 .env.example）
       - max_tokens (int):    最大输出 token 数
       - temperature (float): 采样温度 (0.0 ~ 2.0)
 
@@ -60,20 +60,26 @@ def ai_query(system_prompt: str, user_prompt: str, cfg) -> str:
         {"role": "user",   "content": user_prompt},
     ]
 
-    # Compute effective max_tokens: if reasoning_budget is set, add it to max_tokens
-    reasoning_budget = getattr(cfg, "reasoning_budget", 0) or 0
-    effective_max_tokens = cfg.max_tokens + reasoning_budget
-
     # Retry loop: some vLLM deployments return content=None transiently
     max_retries = 3
     for attempt in range(max_retries):
-        resp = client.chat.completions.create(
+        # Build call kwargs based on thinking mode
+        call_kwargs = dict(
             model=cfg.model,
             messages=messages,
-            max_tokens=effective_max_tokens,
-            temperature=cfg.temperature,
+            max_tokens=cfg.max_tokens,
             timeout=getattr(cfg, "timeout", None),
         )
+        thinking_enabled = getattr(cfg, "thinking_enabled", True)
+        if thinking_enabled:
+            reasoning_effort = getattr(cfg, "reasoning_effort", "high")
+            call_kwargs["extra_body"] = {"thinking": {"type": "enabled"}}
+            call_kwargs["reasoning_effort"] = reasoning_effort
+            # temperature/top_p/presence_penalty/frequency_penalty ignored in thinking mode
+        else:
+            call_kwargs["temperature"] = cfg.temperature
+
+        resp = client.chat.completions.create(**call_kwargs)
         content = resp.choices[0].message.content
         if content is not None:
             return content

@@ -36,11 +36,12 @@ class AIConfig:
     #   "https://api.deepseek.com/v1"  → DeepSeek API
     #   "http://localhost:11434/v1"    → Ollama
     api_base: str = ""
-    model: str = "deepseek-chat"
-    api_key: str = ""
+    model: str = "deepseek-v4-flash"   # deepseek-chat 将于 2026/07/24 弃用
+    api_key: str = ""              # 留空则从环境变量 LLM_API_KEY 读取（参见 .env.example）
     max_tokens: int = 4096
     temperature: float = 0.1
-    reasoning_budget: int = 512          # 推理 token 预算 (o1 风格模型)
+    thinking_enabled: bool = True        # DeepSeek 思考模式开关（默认开启）
+    reasoning_effort: str = "high"       # 推理强度: "high" | "max"（Agent 类请求自动设为 max）
     timeout: Optional[int] = None        # API 调用超时（秒）None=不超时
 
     # Task-level switches
